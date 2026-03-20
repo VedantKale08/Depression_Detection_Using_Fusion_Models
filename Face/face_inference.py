@@ -148,10 +148,8 @@ def get_face_emotion_from_video_v1(video_path, model, sample_rate_fps=5):
                 all_probs.extend(batch_probs)
         probs = np.array(all_probs)
             
-        # Average probability across time
         avg_probs = np.mean(probs, axis=0)
         
-        # Apply the correct output label remapping
         reordered_probs = avg_probs[[3, 4, 5, 0, 6, 2, 1]]
         return reordered_probs
         
