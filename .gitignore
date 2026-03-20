@@ -1,0 +1,33 @@
+# Environments
+.venv/
+venv/
+env/
+.env
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints/
+
+# Models & Weights (To prevent uploading >100MB to GitHub)
+# If you want to upload models using Git LFS, remove these lines and use: git lfs track "*.pth"
+working/*.pth
+models/*.pth
+*.pt
+*.pth
+*.onnx
+*.h5
+*.hdf5
+
+# Data (Avoid uploading large test datasets or videos)
+# test_data/
+# *.mp4
+# *.wav
+# *.avi
+# *.mov
+
+# IDEs
+.idea/
+.vscode/
