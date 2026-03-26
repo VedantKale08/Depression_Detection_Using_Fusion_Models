@@ -5,11 +5,19 @@ import numpy as np
 # Suppress tensorflow warnings if any
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+import sys
+from pathlib import Path
+
+# Add project root to python path to resolve Audio and Text imports
+project_root = str(Path(__file__).parent.parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 from Audio.audio_inference import get_audio_emotion_vector_v1
 from Text.text_inference import get_text_emotion_vector
 
 def main():
-    base_dir = "./test_data/DAIC_WOZ"
+    base_dir = "data/raw/DAIC_WOZ"
     
     # Find all participant folders (e.g. 300_P, 301_P)
     participant_folders = glob.glob(os.path.join(base_dir, "*_P"))
