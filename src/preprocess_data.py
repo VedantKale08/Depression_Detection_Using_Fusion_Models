@@ -2,6 +2,12 @@ import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import sys
+
+# Add project root to python path
+project_root = str(Path(__file__).parent.parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 def create_global_stats():
     return {

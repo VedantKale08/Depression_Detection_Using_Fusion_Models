@@ -3,6 +3,19 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+import sys
+from pathlib import Path
+
+# Add project root to python path to resolve data_loader and model imports
+project_root = str(Path(__file__).parent.parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+# Also add src to path if running from root so it finds data_loader and model
+src_path = str(Path(__file__).parent)
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
+
 from tqdm import tqdm
 from data_loader import get_dataloaders
 from model import DepressionHybridModel
