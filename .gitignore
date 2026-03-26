@@ -22,7 +22,7 @@ models/*.pth
 *.hdf5
 
 # Data (Avoid uploading large test datasets or videos)
-# test_data/
+test_data/DAIC_WOZ
 # *.mp4
 # *.wav
 # *.avi
@@ -31,3 +31,4 @@ models/*.pth
 # IDEs
 .idea/
 .vscode/
+
