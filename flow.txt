@@ -1,0 +1,11 @@
+To generate emotion vectors for each data in DIAC_WOZ
+python src/extract_test_emotions.py 
+
+To extract raw features of face and audio for user input
+python src/extract_raw_features.py --video assets/sad.mp4 --id 100
+
+TO preprocess data
+python src/preprocess_data.py 
+
+To train the model
+python src/train_model.py
