@@ -45,17 +45,25 @@ def get_text_emotion_vector(transcript_file):
         if _predictor is None:
             _predictor = TextEmotionPredictor()
 
+        # Join all utterances into a single continuous text string
+        full_text = " ".join(texts)
+        words = full_text.split()
+        
+        # Split into chunks of roughly 100 words to provide maximum context
+        # while respecting the model's 128 max token length limits.
+        chunk_size = 100
+        chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
+
         all_probs = []
-        for text in texts:
-            text = text.strip()
-            if text:
-                prob_list, _ = _predictor.predict_probabilities(text)
+        for chunk in chunks:
+            if chunk.strip():
+                prob_list, _ = _predictor.predict_probabilities(chunk)
                 all_probs.append(prob_list)
         
         if not all_probs:
             return np.zeros(len(emotion_labels))
             
-        # Average the predicted probabilities across all user utterances
+        # Average the predicted probabilities across all chunks
         avg_probs = np.mean(all_probs, axis=0)
         
         # Ensure array sums exactly to 1.0
