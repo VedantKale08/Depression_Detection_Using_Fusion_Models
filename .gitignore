@@ -14,6 +14,7 @@ __pycache__/
 # Models & Weights (To prevent uploading >100MB to GitHub)
 # If you want to upload models using Git LFS, remove these lines and use: git lfs track "*.pth"
 working/*.pth
+working/saved_model
 models/*.pth
 *.pt
 *.pth
@@ -23,7 +24,7 @@ models/*.pth
 
 # Data (Avoid uploading large test datasets or videos)
 data
-# *.mp4
+*.mp4
 # *.wav
 # *.avi
 # *.mov
