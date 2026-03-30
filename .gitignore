@@ -13,6 +13,7 @@ __pycache__/
 
 # Models & Weights (To prevent uploading >100MB to GitHub)
 # If you want to upload models using Git LFS, remove these lines and use: git lfs track "*.pth"
+working
 working/*.pth
 working/saved_model
 models/*.pth

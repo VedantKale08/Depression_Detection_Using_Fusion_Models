@@ -14,7 +14,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from Audio.audio_inference import get_audio_emotion_vector_v1
-from Text.text_inference import get_text_emotion_vector
+from Text import get_text_emotion_vector
 
 def main():
     base_dir = "data/raw/DAIC_WOZ"
