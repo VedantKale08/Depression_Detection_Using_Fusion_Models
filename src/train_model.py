@@ -27,7 +27,7 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
     print(f"Using device: {device}")
     
     # 1. Prepare Data Loaders
-    train_loader, dev_loader = get_dataloaders(data_dir, batch_size=batch_size, num_workers=4)
+    train_loader, dev_loader = get_dataloaders(data_dir, batch_size=batch_size, num_workers=0)
     if len(train_loader.dataset) == 0:
         print("Error: Train dataset is empty. Please run preprocess_data.py first.")
         return
@@ -39,9 +39,19 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
     model.to(device)
     
     # 3. Setup Loss and Optimizer
-    # We use BCEWithLogitsLoss because it is numerically more robust than Sigmoid + BCELoss
-    criterion = nn.BCEWithLogitsLoss() 
+    # Compute pos_weight to counteract class imbalance (depressed vs. not-depressed)
+    # pos_weight = (# negative samples) / (# positive samples)
+    pos_count = sum(s['label'] for s in train_loader.dataset.samples)
+    neg_count = len(train_loader.dataset.samples) - pos_count
+    pos_weight_val = neg_count / max(pos_count, 1)
+    pos_weight = torch.tensor([pos_weight_val], device=device)
+    print(f"Class balance — Depressed chunks: {int(pos_count)} | Non-depressed chunks: {int(neg_count)} | pos_weight: {pos_weight_val:.2f}")
+    
+    # BCEWithLogitsLoss with pos_weight is numerically stable and handles imbalanced datasets
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
+    # ReduceLROnPlateau: halve LR if dev F1 doesn't improve for 3 epochs
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
     
     best_f1 = 0.0
     os.makedirs("weights", exist_ok=True)
@@ -121,10 +131,13 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
         else:
             dev_loss, dev_acc, dev_f1 = float('inf'), 0.0, 0.0
             
-        print(f"Epoch {epoch} Summary:")
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Epoch {epoch} Summary (lr={current_lr:.2e}):")
         print(f"  Train -> Loss: {train_loss:.4f} | Acc: {train_acc:.4f} | F1: {train_f1:.4f}")
         if len(dev_loader) > 0:
             print(f"  Dev   -> Loss: {dev_loss:.4f} | Acc: {dev_acc:.4f} | F1: {dev_f1:.4f}")
+            # Step scheduler based on validation F1
+            scheduler.step(dev_f1)
             
         # 6. Save Best Weights (model + optimizer state for full resume)
         # Save model if F1 score improved on the validation set

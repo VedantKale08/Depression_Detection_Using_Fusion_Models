@@ -83,9 +83,10 @@ class DAIC_Dataset(Dataset):
             
         return x, y
 
-def get_dataloaders(data_dir, batch_size=32, num_workers=4):
+def get_dataloaders(data_dir, batch_size=32, num_workers=0):
     """
     Returns (train_loader, dev_loader)
+    Note: num_workers=0 is the safe default on Windows (no fork support).
     """
     train_dataset = DAIC_Dataset(data_dir, split="train")
     # Setting workers > 0 requires care with our naive file cache. 

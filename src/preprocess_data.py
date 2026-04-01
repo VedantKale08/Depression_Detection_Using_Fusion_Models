@@ -126,6 +126,7 @@ def main():
             print(f"Processing folder {i}/{len(part_dirs)}: {pd_name}")
         part_id = pd_name.split('_')[0]
         if part_id not in all_labels:
+            print(f"  WARNING: Folder '{pd_name}' (ID={part_id}) not found in label CSVs — skipping.")
             continue
             
         label = all_labels[part_id]
