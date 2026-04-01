@@ -21,7 +21,7 @@ from data_loader import get_dataloaders
 from model import DepressionHybridModel
 from sklearn.metrics import f1_score, accuracy_score
 
-def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_rate=1e-3, device=None):
+def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_rate=1e-3, device=None, resume=True):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
@@ -46,6 +46,22 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
     best_f1 = 0.0
     os.makedirs("weights", exist_ok=True)
     
+    # 4. Resume from checkpoint if available
+    checkpoint_path = "weights/best_hybrid_model.pth"
+    if resume and os.path.exists(checkpoint_path):
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            best_f1 = checkpoint.get('best_f1', 0.0)
+            print(f"Resumed from checkpoint '{checkpoint_path}' (best F1 so far: {best_f1:.4f})")
+        else:
+            # Legacy: checkpoint is just model state_dict
+            model.load_state_dict(checkpoint)
+            print(f"Resumed model weights from '{checkpoint_path}' (no optimizer state found)")
+    else:
+        print("No checkpoint found — training from scratch.")
+
     # 4. Training Loop
     for epoch in range(1, epochs + 1):
         model.train()
@@ -110,17 +126,25 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
         if len(dev_loader) > 0:
             print(f"  Dev   -> Loss: {dev_loss:.4f} | Acc: {dev_acc:.4f} | F1: {dev_f1:.4f}")
             
-        # 6. Save Best Weights
+        # 6. Save Best Weights (model + optimizer state for full resume)
         # Save model if F1 score improved on the validation set
         if len(dev_loader) > 0 and dev_f1 >= best_f1 and dev_f1 > 0:
             best_f1 = dev_f1
-            torch.save(model.state_dict(), "weights/best_hybrid_model.pth")
-            print(f"  --> Saved new best model to 'weights/best_hybrid_model.pth' (F1={best_f1:.4f})")
+            torch.save({
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'best_f1': best_f1,
+            }, checkpoint_path)
+            print(f"  --> Saved new best model to '{checkpoint_path}' (F1={best_f1:.4f})")
         # Fallback: Save if no dev set and train F1 improves
         elif len(dev_loader) == 0 and train_f1 >= best_f1:
             best_f1 = train_f1
-            torch.save(model.state_dict(), "weights/best_hybrid_model.pth")
-            print(f"  --> Saved model to 'weights/best_hybrid_model.pth' (Train F1={best_f1:.4f})")
+            torch.save({
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'best_f1': best_f1,
+            }, checkpoint_path)
+            print(f"  --> Saved model to '{checkpoint_path}' (Train F1={best_f1:.4f})")
 
 if __name__ == "__main__":
     import argparse
@@ -129,6 +153,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=15, help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--no-resume", action="store_true", help="Start training from scratch, ignoring any saved checkpoint")
     args = parser.parse_args()
     
-    train_model(data_dir=args.data_dir, batch_size=args.batch_size, epochs=args.epochs, learning_rate=args.lr)
+    train_model(data_dir=args.data_dir, batch_size=args.batch_size, epochs=args.epochs, learning_rate=args.lr, resume=not args.no_resume)

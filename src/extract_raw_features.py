@@ -224,6 +224,113 @@ def extract_transcript(wav_path, out_dir, participant_id):
     df.to_csv(out_file, sep='\t', index=False)
 
 
+def extract_covarep(wav_path, out_dir, participant_id):
+    """
+    Extracts 74 COVAREP-style acoustic features using librosa at 100Hz.
+    Columns match the original COVAREP feature order:
+      F0, VUV, NAQ, QOQ, H1H2, PSP, MDQ, peakSlope, Rd, Rd_conf, creak,
+      MCEP_0..24 (25), HMPDM_0..24 (25), HMPDD_0..12 (13)
+    Creates [ID]_COVAREP.csv
+    """
+    import librosa
+
+    print(f"[{participant_id}] Extracting COVAREP-style features (74 features) using librosa...")
+    try:
+        y, sr = librosa.load(wav_path, sr=16000, mono=True)
+
+        # Frame settings — 10ms hop = 100Hz, matching COVAREP default
+        hop_length = int(sr * 0.01)   # 160 samples
+        win_length = int(sr * 0.025)  # 400 samples
+        n_fft = 512
+
+        # --- F0 and VUV via pyin ---
+        f0, voiced_flag, _ = librosa.pyin(
+            y, fmin=50, fmax=500, sr=sr,
+            hop_length=hop_length, win_length=win_length, fill_na=0.0
+        )
+        F0  = np.nan_to_num(f0, nan=0.0)
+        VUV = voiced_flag.astype(float)
+        num_frames = len(F0)
+
+        def _resample(v, n):
+            if len(v) == n:
+                return v
+            return np.interp(np.linspace(0, 1, n), np.linspace(0, 1, len(v)), v)
+
+        def _norm(v):
+            v = _resample(v, num_frames)
+            vmin, vmax = v.min(), v.max()
+            return (v - vmin) / (vmax - vmin + 1e-8)
+
+        # --- Spectral features for glottal-source proxies ---
+        spec_centroid  = librosa.feature.spectral_centroid(y=y, sr=sr, n_fft=n_fft, hop_length=hop_length)[0]
+        spec_bandwidth = librosa.feature.spectral_bandwidth(y=y, sr=sr, n_fft=n_fft, hop_length=hop_length)[0]
+        spec_rolloff   = librosa.feature.spectral_rolloff(y=y, sr=sr, n_fft=n_fft, hop_length=hop_length)[0]
+        spec_flatness  = librosa.feature.spectral_flatness(y=y, n_fft=n_fft, hop_length=hop_length)[0]
+        zcr            = librosa.feature.zero_crossing_rate(y, hop_length=hop_length)[0]
+        rms            = librosa.feature.rms(y=y, hop_length=hop_length)[0]
+
+        # --- Glottal-source proxies (9 features) ---
+        NAQ       = _norm(rms)
+        QOQ       = _norm(spec_centroid)
+        H1H2      = _norm(spec_flatness)
+        PSP       = _norm(spec_rolloff)
+        MDQ       = _norm(spec_bandwidth)
+        peakSlope = _norm(np.gradient(_resample(rms, num_frames)))
+        Rd        = _resample(F0, num_frames) / (500.0 + 1e-8)
+        Rd_conf   = VUV.copy()
+        creak     = (_resample(zcr, num_frames) > 0.1).astype(float)
+
+        # --- MCEP: 25 mel-cepstral coefficients (MFCC 0..24) ---
+        mfcc = librosa.feature.mfcc(
+            y=y, sr=sr, n_mfcc=25,
+            n_fft=n_fft, hop_length=hop_length, win_length=win_length
+        )
+        MCEP = np.array([_resample(mfcc[i], num_frames) for i in range(25)]).T
+
+        # --- HMPDM: harmonic phase distortion mean (25) ---
+        # Approximated: chroma(12) + tonnetz(6) + harmonic-MFCC(7)
+        chroma    = librosa.feature.chroma_stft(y=y, sr=sr, n_fft=n_fft, hop_length=hop_length)
+        tonnetz   = librosa.feature.tonnetz(y=y, sr=sr, hop_length=hop_length)
+        harm_mfcc = librosa.feature.mfcc(
+            y=librosa.effects.harmonic(y), sr=sr, n_mfcc=7,
+            n_fft=n_fft, hop_length=hop_length, win_length=win_length
+        )
+        HMPDM_src = np.vstack([chroma, tonnetz, harm_mfcc])  # (25, T)
+        HMPDM = np.array([_resample(HMPDM_src[i], num_frames) for i in range(25)]).T
+
+        # --- HMPDD: harmonic phase distortion deviation (13) ---
+        # Approximated: percussive-MFCC(6) + delta-MFCC(7)
+        perc_mfcc  = librosa.feature.mfcc(
+            y=librosa.effects.percussive(y), sr=sr, n_mfcc=6,
+            n_fft=n_fft, hop_length=hop_length, win_length=win_length
+        )
+        delta_mfcc = librosa.feature.delta(mfcc[:7, :])
+        HMPDD_src  = np.vstack([perc_mfcc, delta_mfcc])  # (13, T)
+        HMPDD = np.array([_resample(HMPDD_src[i], num_frames) for i in range(13)]).T
+
+        # --- Assemble all 74 columns and save ---
+        features = np.column_stack([
+            F0, VUV,
+            NAQ, QOQ, H1H2, PSP, MDQ, peakSlope, Rd, Rd_conf, creak,
+            MCEP, HMPDM, HMPDD
+        ])  # (num_frames, 74)
+        features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+        pd.DataFrame(features).to_csv(
+            os.path.join(out_dir, f"{participant_id}_COVAREP.csv"),
+            index=False, header=False, float_format='%.6f'
+        )
+        print(f"[{participant_id}] COVAREP saved: {features.shape[0]} frames x {features.shape[1]} features")
+
+    except Exception as e:
+        print(f"[{participant_id}] Librosa COVAREP extraction failed: {e}. Falling back to zero array.")
+        snd = parselmouth.Sound(wav_path)
+        num_frames = int(snd.get_total_duration() * 100)
+        pd.DataFrame(np.zeros((num_frames, 74))).to_csv(
+            os.path.join(out_dir, f"{participant_id}_COVAREP.csv"), index=False, header=False
+        )
+
+
 def process_video(video_path, participant_id="USER"):
     """
     Main pipeline to process a video and generate all raw features.
@@ -247,14 +354,8 @@ def process_video(video_path, participant_id="USER"):
     # 4. Transcript
     extract_transcript(wav_path, out_dir, participant_id)
     
-    # 5. COVAREP (Mock 74-dim for now unless Octave script is run)
-    print(f"[{participant_id}] Creating dummy COVAREP output (74 features)...")
-    # For a perfect match, an Octave script calling COVAREP would be used.
-    # Here we create a dummy with 74 columns at 100Hz to prevent crashes.
-    snd = parselmouth.Sound(wav_path)
-    num_frames = int(snd.get_total_duration() * 100)
-    covarep_dummy = np.zeros((num_frames, 74))
-    pd.DataFrame(covarep_dummy).to_csv(os.path.join(out_dir, f"{participant_id}_COVAREP.csv"), index=False, header=False)
+    # 5. COVAREP
+    extract_covarep(wav_path, out_dir, participant_id)
 
     # 6. Emotion Vectors
     print(f"[{participant_id}] Extracting Audio Emotion Vector...")
