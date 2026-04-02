@@ -151,7 +151,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the DAIC-WOZ Hybrid Depression Model")
     parser.add_argument("--data_dir", type=str, default="data/processed", help="Directory containing processed chunks")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
-    parser.add_argument("--epochs", type=int, default=15, help="Number of training epochs")
+    parser.add_argument("--epochs", type=int, default=30, help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--no-resume", action="store_true", help="Start training from scratch, ignoring any saved checkpoint")
     args = parser.parse_args()
