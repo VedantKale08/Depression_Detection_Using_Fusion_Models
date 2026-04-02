@@ -59,6 +59,7 @@ def process_participant(participant_id, data_dir, output_dir, chunk_size=300):
     
     # Merge
     merged = pd.merge(covarep_10hz, clnf_10hz, left_index=True, right_index=True, how='outer')
+    merged = merged.replace([np.inf, -np.inf], np.nan)
     merged = merged.ffill().fillna(0) # Forward fill, then fill remaining with 0
     
     length = len(merged)
@@ -78,6 +79,7 @@ def process_participant(participant_id, data_dir, output_dir, chunk_size=300):
         merged.iloc[:, 74:].values,  # CLNF
         text_emo_seq
     ], axis=1)
+    features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
     
     # Chunking
     chunks = []

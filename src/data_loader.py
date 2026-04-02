@@ -80,6 +80,7 @@ class DAIC_Dataset(Dataset):
         
         if self.normalize:
             x = (x - self.mean) / self.std
+            x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
             
         return x, y
 

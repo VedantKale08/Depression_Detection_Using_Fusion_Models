@@ -18,6 +18,50 @@ from extract_raw_features import process_video
 from preprocess_data import process_participant
 from model import DepressionHybridModel
 
+
+def aggregate_sequence_probs(probs):
+    """Return a robust summary across sequence probabilities."""
+    probs = np.asarray(probs).reshape(-1)
+    mean_prob = float(np.mean(probs))
+    median_prob = float(np.median(probs))
+    max_prob = float(np.max(probs))
+    min_prob = float(np.min(probs))
+
+    buckets = {
+        ">= 0.70": probs >= 0.70,
+        "0.50 - 0.70": (probs >= 0.50) & (probs < 0.70),
+        "0.30 - 0.50": (probs >= 0.30) & (probs < 0.50),
+        "< 0.30": probs < 0.30,
+    }
+    counts = {label: int(mask.sum()) for label, mask in buckets.items()}
+    percentages = {label: float(mask.mean()) for label, mask in buckets.items()}
+    positive_pct = float((probs >= 0.50).mean())
+    high_pct = float((probs >= 0.70).mean())
+
+    depression_level = categorize_depression_level(median_prob)
+
+    return {
+        "mean_prob": mean_prob,
+        "median_prob": median_prob,
+        "max_prob": max_prob,
+        "min_prob": min_prob,
+        "counts": counts,
+        "percentages": percentages,
+        "positive_pct": positive_pct,
+        "high_pct": high_pct,
+        "depression_level": depression_level,
+    }
+
+
+def categorize_depression_level(probability):
+    """Map a probability value to low/medium/high depression categories."""
+    if probability > 0.65:
+        return "high"
+    if probability > 0.35:
+        return "medium"
+    return "low"
+
+
 def predict(video_path):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
@@ -81,7 +125,8 @@ def predict(video_path):
         
     # Initialize Multimodal Sequence Model
     model = DepressionHybridModel(input_size=224, hidden_size=128, num_layers=2)
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    checkpoint = torch.load(model_path, map_location=device)
+    model.load_state_dict(checkpoint["model_state_dict"])    
     model.to(device)
     model.eval()
     
@@ -89,24 +134,35 @@ def predict(video_path):
         logits = model(x_tensor)
         probs = torch.sigmoid(logits).cpu().numpy()
         
+    summary = aggregate_sequence_probs(probs)
+
     print("\n" + "="*60)
     print("FINAL INFERENCE RESULTS")
     print("="*60)
-    
-    # Aggregate predictions across chunks by averaging probability
-    avg_prob = np.mean(probs)
     
     print(f"Analyzed {len(probs)} valid segment(s) from the video.")
     for i, p in enumerate(probs):
         print(f"  Sequence {i+1} Probability: {p:.4f} ({(p*100):.1f}%)")
         
+    level = categorize_depression_level(summary['median_prob'])
     print("\n------------------------------------------------------------")
-    print(f"OVERALL DEPRESSION PROBABILITY: {avg_prob:.4f} ({(avg_prob*100):.1f}%)")
+    print(f"Depression level:   {level.upper()} ({(summary['median_prob']*100):.1f}%)")
+    print(f"Sequences >= 50%:  {summary['positive_pct']*100:.1f}%")
+    print(f"Sequences >= 70%:  {summary['high_pct']*100:.1f}%")
     
-    if avg_prob >= 0.5:
-        print("DIAGNOSIS: The model predicts a HIGH likelihood of Depression.")
+    print("\nSegment bucket distribution:")
+    for label in [">= 0.70", "0.50 - 0.70", "0.30 - 0.50", "< 0.30"]:
+        count = summary['counts'][label]
+        pct = summary['percentages'][label] * 100
+        print(f"  {label}: {count} segment(s) ({pct:.1f}%)")
+    
+    print("\n------------------------------------------------------------")
+    if level == "high":
+        print("DIAGNOSIS: HIGH depression risk — must immediately consult a doctor.")
+    elif level == "medium":
+        print("DIAGNOSIS: MEDIUM depression risk — user should pay attention.")
     else:
-        print("DIAGNOSIS: The model predicts a LOW likelihood of Depression.")
+        print("DIAGNOSIS: LOW depression risk — can be ignored.")
     print("------------------------------------------------------------\n")
     
 
