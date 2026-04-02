@@ -18,8 +18,8 @@ from Text import get_text_emotion_vector
 
 def extract_face_features(video_path, out_dir, participant_id):
     """
-    Runs OpenFace Docker container to extract AUs and landmarks.
-    Creates: [ID]_CLNF_features.txt, [ID]_CLNF_features3D.txt, [ID]_CLNF_AUs.txt
+    Runs OpenFace Docker container to extract AUs, landmarks, pose, gaze, and HOG.
+    Creates: [ID]_CLNF_features.txt, [ID]_CLNF_features3D.txt, [ID]_CLNF_AUs.txt, [ID]_CLNF_pose.txt, [ID]_CLNF_gaze.txt, [ID]_CLNF_hog.bin
     """
     print(f"[{participant_id}] Extracting Face features using OpenFace (Docker)...")
     video_path_abs = os.path.abspath(video_path)
@@ -32,7 +32,7 @@ def extract_face_features(video_path, out_dir, participant_id):
         "-v", f"{out_dir_abs}:/out_dir",
         "algebr/openface:latest",
         "-c",
-        f"build/bin/FeatureExtraction -f /video_dir/{os.path.basename(video_path)} -out_dir /out_dir -2Dfp -3Dfp -aus"
+        f"build/bin/FeatureExtraction -f /video_dir/{os.path.basename(video_path)} -out_dir /out_dir -2Dfp -3Dfp -aus -pose -gaze -hogalign"
     ]
     
     try:
@@ -81,12 +81,68 @@ def extract_face_features(video_path, out_dir, participant_id):
                 df_au = df_au[au_cols_expected]
                 df_au.to_csv(os.path.join(out_dir, f"{participant_id}_CLNF_AUs.txt"), index=False)
                 
-            # Remove the raw CSV to clean up
+            # 4. Gaze (gaze.txt)
+            gaze_cols_expected = ['frame', 'timestamp', 'confidence', 'success', 'x_0', 'y_0', 'z_0', 'x_1', 'y_1', 'z_1', 'x_h0', 'y_h0', 'z_h0', 'x_h1', 'y_h1', 'z_h1']
+            if 'gaze_0_x' in df.columns:
+                df_gaze = pd.DataFrame()
+                for c in ['frame', 'timestamp', 'confidence', 'success']:
+                    df_gaze[c] = df[c] if c in df.columns else 0.0
+                
+                df_gaze['x_0'] = df['gaze_0_x']
+                df_gaze['y_0'] = df['gaze_0_y']
+                df_gaze['z_0'] = df['gaze_0_z']
+                df_gaze['x_1'] = df['gaze_1_x']
+                df_gaze['y_1'] = df['gaze_1_y']
+                df_gaze['z_1'] = df['gaze_1_z']
+                
+                # Fill head relative gaze with 0.0 since newer OpenFace does not provide these direct coordinates
+                for col in ['x_h0', 'y_h0', 'z_h0', 'x_h1', 'y_h1', 'z_h1']:
+                    df_gaze[col] = 0.0
+                    
+                df_gaze = df_gaze[gaze_cols_expected]
+                df_gaze.to_csv(os.path.join(out_dir, f"{participant_id}_CLNF_gaze.txt"), index=False)
+                
+            # 5. Pose (pose.txt)
+            pose_cols_expected = ['frame', 'timestamp', 'confidence', 'success', 'Tx', 'Ty', 'Tz', 'Rx', 'Ry', 'Rz']
+            if 'pose_Tx' in df.columns:
+                df_pose = pd.DataFrame()
+                for c in ['frame', 'timestamp', 'confidence', 'success']:
+                    if c in df.columns:
+                        df_pose[c] = df[c]
+                
+                df_pose['Tx'] = df['pose_Tx']
+                df_pose['Ty'] = df['pose_Ty']
+                df_pose['Tz'] = df['pose_Tz']
+                df_pose['Rx'] = df['pose_Rx']
+                df_pose['Ry'] = df['pose_Ry']
+                df_pose['Rz'] = df['pose_Rz']
+                
+                df_pose = df_pose[pose_cols_expected]
+                df_pose.to_csv(os.path.join(out_dir, f"{participant_id}_CLNF_pose.txt"), index=False)
+                
+        # 6. HOG (*.hog -> _CLNF_hog.bin)
+        raw_hog = os.path.join(out_dir, f"{video_stem}.hog")
+        if os.path.exists(raw_hog):
+            import shutil
+            target_hog = os.path.join(out_dir, f"{participant_id}_CLNF_hog.bin")
+            shutil.move(raw_hog, target_hog)
+            
+        # 7. Cleanup OpenFace residual files
+        if os.path.exists(raw_csv):
             os.remove(raw_csv)
+            
+        of_details = os.path.join(out_dir, f"{video_stem}_of_details.txt")
+        if os.path.exists(of_details):
+            os.remove(of_details)
             
     except subprocess.CalledProcessError as e:
         print(f"Error running OpenFace: {e}")
         print("Make sure Docker is installed and running.")
+    except FileNotFoundError:
+        print("Error: 'docker' command not found.")
+        print("Please install Docker Desktop for Windows and ensure it's in your PATH.")
+        print("Check https://docs.docker.com/desktop/install/windows-install/ for more details.")
+        print("Skipping Face Feature extraction...")
 
 def extract_audio(video_path, out_dir, participant_id):
     """
@@ -99,7 +155,16 @@ def extract_audio(video_path, out_dir, participant_id):
         "-ac", "1", "-ar", "16000",
         wav_path
     ]
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        print("Error: 'ffmpeg' command not found.")
+        print("Please install FFmpeg and ensure it's in your PATH.")
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        print(f"Error running FFmpeg: {e}")
+        sys.exit(1)
+        
     return wav_path
 
 def extract_formants(wav_path, out_dir, participant_id):
