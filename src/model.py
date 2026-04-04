@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class DepressionHybridModel(nn.Module):
-    def __init__(self, input_size=224, hidden_size=128, num_layers=2, dropout=0.3):
+    def __init__(self, input_size=224, hidden_size=64, num_layers=1, dropout=0.5):
         """
         Multimodal Sequence Model for Depression Detection based on Audio, Text, and Facial features.
         

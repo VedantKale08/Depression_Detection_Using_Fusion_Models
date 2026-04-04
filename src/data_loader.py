@@ -82,6 +82,11 @@ class DAIC_Dataset(Dataset):
             x = (x - self.mean) / self.std
             x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
             
+        # Add random Gaussian noise during training to prevent memorization
+        if self.split == "train":
+            noise = torch.randn_like(x) * 0.05  # 5% standard deviation noise
+            x = x + noise
+            
         return x, y
 
 def get_dataloaders(data_dir, batch_size=32, num_workers=0):

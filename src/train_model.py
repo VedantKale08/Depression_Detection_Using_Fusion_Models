@@ -35,7 +35,7 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
     print(f"Data Loaded! Train subsets: {len(train_loader.dataset)} | Dev subsets: {len(dev_loader.dataset)}")
     
     # 2. Setup Model
-    model = DepressionHybridModel(input_size=224, hidden_size=128, num_layers=2)
+    model = DepressionHybridModel(input_size=224, hidden_size=64, num_layers=1, dropout=0.5)
     model.to(device)
     
     # 3. Setup Loss and Optimizer
@@ -49,7 +49,7 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
     
     # BCEWithLogitsLoss with pos_weight is numerically stable and handles imbalanced datasets
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-3)
     # ReduceLROnPlateau: halve LR if dev F1 doesn't improve for 3 epochs
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
     
