@@ -111,12 +111,27 @@ def get_dataloaders(data_dir, batch_size=32, num_workers=0):
     
     return train_loader, dev_loader
 
+def get_test_dataloader(data_dir, batch_size=32, num_workers=0):
+    """
+    Returns test_loader
+    """
+    test_dataset = DAIC_Dataset(data_dir, split="test")
+    test_loader = DataLoader(
+        test_dataset, 
+        batch_size=batch_size, 
+        shuffle=False, 
+        num_workers=num_workers,
+        pin_memory=True
+    )
+    return test_loader
+
 if __name__ == "__main__":
     # Test script locally
     # It assumes the user runs this in their PyTorch environment
     print("Testing DAIC_Dataset...")
     try:
         train_loader, dev_loader = get_dataloaders("data/processed", batch_size=4, num_workers=0)
+        test_loader = get_test_dataloader("data/processed", batch_size=4, num_workers=0)
         for x, y in train_loader:
             print(f"Batch X shape: {x.shape}")
             print(f"Batch Y shape: {y.shape}")

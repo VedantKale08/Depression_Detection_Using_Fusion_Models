@@ -110,12 +110,14 @@ def main():
     
     # Get labels
     train_labels = load_labels(os.path.join(base_dir, "train_split_Depression_AVEC2017.csv"))
-    # dev split as well if available, but for now we look for any and infer split
-    # Actually, let's just create train/ and dev/ directories based on the label files
+    
     dev_labels_path = os.path.join(base_dir, "dev_split_Depression_AVEC2017.csv")
     dev_labels = load_labels(dev_labels_path) if os.path.exists(dev_labels_path) else {}
     
-    all_labels = {**train_labels, **dev_labels}
+    test_labels_path = os.path.join(base_dir, "full_test_split.csv")
+    test_labels = load_labels(test_labels_path) if os.path.exists(test_labels_path) else {}
+    
+    all_labels = {**train_labels, **dev_labels, **test_labels}
     
     stats = create_global_stats()
     
@@ -134,7 +136,12 @@ def main():
         label = all_labels[part_id]
         
         # Determine split
-        split = "train" if part_id in train_labels else "dev"
+        if part_id in train_labels:
+            split = "train"
+        elif part_id in dev_labels:
+            split = "dev"
+        else:
+            split = "test"
         split_out_dir = os.path.join(output_dir, split)
         os.makedirs(split_out_dir, exist_ok=True)
         

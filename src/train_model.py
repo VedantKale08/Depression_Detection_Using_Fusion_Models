@@ -17,7 +17,7 @@ if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
 from tqdm import tqdm
-from data_loader import get_dataloaders
+from data_loader import get_dataloaders, get_test_dataloader
 from model import DepressionHybridModel
 from sklearn.metrics import f1_score, accuracy_score
 
@@ -158,6 +158,48 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
                 'best_f1': best_f1,
             }, checkpoint_path)
             print(f"  --> Saved model to '{checkpoint_path}' (Train F1={best_f1:.4f})")
+
+    # 7. Evaluate on Test Data
+    print("\\n--- Evaluating Best Model on Test Data ---")
+    test_loader = get_test_dataloader(data_dir, batch_size=batch_size, num_workers=0)
+    
+    if len(test_loader.dataset) == 0:
+        print("Test dataset is empty. Skipping test evaluation.")
+    else:
+        # Load the best model weights
+        if os.path.exists(checkpoint_path):
+            checkpoint = torch.load(checkpoint_path, map_location=device)
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
+            else:
+                model.load_state_dict(checkpoint)
+            print(f"Loaded best weights from '{checkpoint_path}' for testing.")
+        
+        model.eval()
+        test_loss = 0.0
+        test_preds, test_targets = [], []
+        
+        with torch.no_grad():
+            for x_batch, y_batch in tqdm(test_loader, desc="[Test Evaluate]"):
+                x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+                logits = model(x_batch)
+                loss = criterion(logits, y_batch)
+                
+                test_loss += loss.item()
+                preds = (logits > 0.0).float()
+                
+                test_preds.extend(preds.cpu().numpy())
+                test_targets.extend(y_batch.cpu().numpy())
+                
+        test_loss /= len(test_loader)
+        test_acc = accuracy_score(test_targets, test_preds)
+        test_f1 = f1_score(test_targets, test_preds, zero_division=0)
+        
+        print("\\n=== Test Results ===")
+        print(f"Test Loss: {test_loss:.4f}")
+        print(f"Test Accuracy: {test_acc:.4f}")
+        print(f"Test F1 Score: {test_f1:.4f}")
+        print("====================\\n")
 
 if __name__ == "__main__":
     import argparse
