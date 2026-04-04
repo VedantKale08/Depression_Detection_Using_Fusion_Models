@@ -20,13 +20,17 @@ class DepressionHybridModel(nn.Module):
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
+            bidirectional=True,
             dropout=dropout if num_layers > 1 else 0
         )
         
-        self.layer_norm = nn.LayerNorm(hidden_size)
+        # Temporal Attention Mechanism
+        self.attention_weights = nn.Linear(hidden_size * 2, 1)
+        
+        self.layer_norm = nn.LayerNorm(hidden_size * 2)
         
         # Add a dense network head for the final classification
-        self.fc1 = nn.Linear(hidden_size, 64)
+        self.fc1 = nn.Linear(hidden_size * 2, 64)
         self.relu = nn.ReLU()
         self.dropout_fc = nn.Dropout(dropout)
         self.fc2 = nn.Linear(64, 1)
@@ -36,16 +40,20 @@ class DepressionHybridModel(nn.Module):
         Forward pass.
         x shape: (Batch_Size, Time_Steps, Features)
         """
-        # out shape: (batch_size, seq_length, hidden_size)
-        # hn shape: (num_layers, batch_size, hidden_size)
-        out, (hn, cn) = self.lstm(x)
+        # out shape: (batch_size, seq_length, hidden_size * 2)
+        out, _ = self.lstm(x)
         
-        # We heavily rely on the temporal aspect, so we extract the last hidden state representing the entire sequence contexts
-        # The output of the top layer at the last timestep is out[:, -1, :] 
-        last_timestep_out = out[:, -1, :]
+        # Apply Temporal Attention to find the most emotionally relevant frames
+        # attention_scores shape: (batch_size, seq_length, 1)
+        attention_scores = self.attention_weights(out)
+        attention_weights = torch.softmax(attention_scores, dim=1) # softmax over sequence length
+        
+        # Multiply weights by outputs: (batch_size, seq_length, hidden_size * 2)
+        # Sum over sequence length: (batch_size, hidden_size * 2)
+        context_vector = torch.sum(attention_weights * out, dim=1)
         
         # Normalize and pass through dense layers
-        norm_out = self.layer_norm(last_timestep_out)
+        norm_out = self.layer_norm(context_vector)
         
         dense_out = self.fc1(norm_out)
         dense_out = self.relu(dense_out)

@@ -39,16 +39,8 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
     model.to(device)
     
     # 3. Setup Loss and Optimizer
-    # Compute pos_weight to counteract class imbalance (depressed vs. not-depressed)
-    # pos_weight = (# negative samples) / (# positive samples)
-    pos_count = sum(s['label'] for s in train_loader.dataset.samples)
-    neg_count = len(train_loader.dataset.samples) - pos_count
-    pos_weight_val = neg_count / max(pos_count, 1)
-    pos_weight = torch.tensor([pos_weight_val], device=device)
-    print(f"Class balance — Depressed chunks: {int(pos_count)} | Non-depressed chunks: {int(neg_count)} | pos_weight: {pos_weight_val:.2f}")
-    
-    # BCEWithLogitsLoss with pos_weight is numerically stable and handles imbalanced datasets
-    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    # BCEWithLogitsLoss (no pos_weight needed anymore since WeightedRandomSampler balances batches naturally)
+    criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-3)
     # ReduceLROnPlateau: halve LR if dev F1 doesn't improve for 3 epochs
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)

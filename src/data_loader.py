@@ -2,7 +2,7 @@ import os
 import glob
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 
 class DAIC_Dataset(Dataset):
     def __init__(self, data_dir, split="train", normalize=True):
@@ -95,12 +95,27 @@ def get_dataloaders(data_dir, batch_size=32, num_workers=0):
     Note: num_workers=0 is the safe default on Windows (no fork support).
     """
     train_dataset = DAIC_Dataset(data_dir, split="train")
-    # Setting workers > 0 requires care with our naive file cache. 
-    # Actually, the file cache is per-worker, so it works perfectly.
+    
+    # Calculate weights for Balanced WeightedRandomSampler
+    labels = [sample['label'] for sample in train_dataset.samples]
+    pos_count = sum(labels)
+    neg_count = len(labels) - pos_count
+    
+    weight_neg = 1.0 / max(neg_count, 1)
+    weight_pos = 1.0 / max(pos_count, 1)
+    sample_weights = [weight_pos if l == 1 else weight_neg for l in labels]
+    
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True
+    )
+    
+    # Shuffle must be False when using sampler
     train_loader = DataLoader(
         train_dataset, 
         batch_size=batch_size, 
-        shuffle=True, 
+        sampler=sampler,
         num_workers=num_workers,
         pin_memory=True
     )
