@@ -68,22 +68,17 @@ def process_participant(participant_id, data_dir, output_dir, chunk_size=300):
     audio_emotion = np.load(audio_emo_path) if os.path.exists(audio_emo_path) else np.zeros((7,))
     text_emotion = np.load(text_emo_path) if os.path.exists(text_emo_path) else np.zeros((7,))
     
-    # Broadcast emotions to match sequence length
-    audio_emo_seq = np.tile(audio_emotion, (length, 1))
-    text_emo_seq = np.tile(text_emotion, (length, 1))
-    
-    # Concatenate all features: COVAREP (74) + Audio Emo (7) + CLNF (136) + Text Emo (7) = 224
+    # Per-frame features: COVAREP (74) + CLNF (136) = 210
+    # Audio/Text emotions are saved separately as auxiliary features — NOT tiled per frame.
+    # This prevents the model from memorizing participant identity via static emotion signatures.
     features = np.concatenate([
-        merged.iloc[:, :74].values,  # COVAREP
-        audio_emo_seq,
-        merged.iloc[:, 74:].values,  # CLNF
-        text_emo_seq
+        merged.iloc[:, :74].values,   # COVAREP (74)
+        merged.iloc[:, 74:].values,   # CLNF (136)
     ], axis=1)
     features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
     
     # Chunking
     chunks = []
-    chunk_index = 0
     for start in range(0, length, chunk_size):
         end = start + chunk_size
         chunk = features[start:end]
@@ -95,7 +90,9 @@ def process_participant(participant_id, data_dir, output_dir, chunk_size=300):
             
         chunks.append(chunk)
     
-    return np.array(chunks)
+    # Return chunks AND the per-session emotion vectors (7+7=14 dims)
+    emotion_vec = np.concatenate([audio_emotion, text_emotion], axis=0).astype(np.float32)  # (14,)
+    return np.array(chunks), emotion_vec
 
 def load_labels(csv_path):
     df = pd.read_csv(csv_path)
@@ -145,16 +142,22 @@ def main():
         split_out_dir = os.path.join(output_dir, split)
         os.makedirs(split_out_dir, exist_ok=True)
         
-        chunks = process_participant(part_id, base_dir, split_out_dir)
-        if chunks is None:
+        result = process_participant(part_id, base_dir, split_out_dir)
+        if result is None:
             continue
+        chunks, emotion_vec = result
             
-        # Update running stats
-        update_global_stats(stats, chunks)
+        # Only update normalization stats from TRAIN split to prevent data leakage
+        if split == "train":
+            update_global_stats(stats, chunks)
         
-        # Save chunks and labels as npz
+        # Save chunks, emotion vector, and label as npz
+        # chunks: (num_chunks, chunk_size, 210) — per-frame temporal features
+        # emotion: (14,)                        — session-level auxiliary features
+        # label: scalar
         np.savez(os.path.join(split_out_dir, f"{part_id}.npz"),
-                 chunks=np.array(chunks, dtype=np.float32), 
+                 chunks=np.array(chunks, dtype=np.float32),
+                 emotion=emotion_vec,
                  label=np.array(label, dtype=np.float32))
     
     # Finalize and save normalization stats

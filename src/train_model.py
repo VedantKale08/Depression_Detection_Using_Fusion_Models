@@ -35,7 +35,8 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
     print(f"Data Loaded! Train subsets: {len(train_loader.dataset)} | Dev subsets: {len(dev_loader.dataset)}")
     
     # 2. Setup Model
-    model = DepressionHybridModel(input_size=224, hidden_size=64, num_layers=1, dropout=0.5)
+    # input_size=210: COVAREP(74) + CLNF(136) — emotions are auxiliary inputs at the FC head
+    model = DepressionHybridModel(input_size=210, hidden_size=64, num_layers=1, dropout=0.5)
     model.to(device)
     
     # 3. Setup Loss and Optimizer
@@ -71,12 +72,14 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
         train_preds, train_targets = [], []
         
         loop = tqdm(train_loader, desc=f"Epoch {epoch}/{epochs} [Train]")
-        for x_batch, y_batch in loop:
-            x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+        for x_batch, emo_batch, y_batch in loop:
+            x_batch   = x_batch.to(device)
+            emo_batch = emo_batch.to(device)
+            y_batch   = y_batch.to(device)
             
             # Forward
             optimizer.zero_grad()
-            logits = model(x_batch)
+            logits = model(x_batch, emo_batch)
             
             # Loss
             loss = criterion(logits, y_batch)
@@ -84,10 +87,10 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
             
             # Backward
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0) # Prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
             
-            # Predictions (Sigmoid > 0.5 is equivalent to Logits > 0.0)
+            # Predictions (logits > 0.0 is equivalent to sigmoid > 0.5)
             preds = (logits > 0.0).float()
             
             train_preds.extend(preds.cpu().numpy())
@@ -106,9 +109,11 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
         
         if len(dev_loader) > 0:
             with torch.no_grad():
-                for x_batch, y_batch in tqdm(dev_loader, desc=f"Epoch {epoch}/{epochs} [Dev]"):
-                    x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-                    logits = model(x_batch)
+                for x_batch, emo_batch, y_batch in tqdm(dev_loader, desc=f"Epoch {epoch}/{epochs} [Dev]"):
+                    x_batch   = x_batch.to(device)
+                    emo_batch = emo_batch.to(device)
+                    y_batch   = y_batch.to(device)
+                    logits = model(x_batch, emo_batch)
                     loss = criterion(logits, y_batch)
                     
                     dev_loss += loss.item()
@@ -172,9 +177,11 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
         test_preds, test_targets = [], []
         
         with torch.no_grad():
-            for x_batch, y_batch in tqdm(test_loader, desc="[Test Evaluate]"):
-                x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-                logits = model(x_batch)
+            for x_batch, emo_batch, y_batch in tqdm(test_loader, desc="[Test Evaluate]"):
+                x_batch   = x_batch.to(device)
+                emo_batch = emo_batch.to(device)
+                y_batch   = y_batch.to(device)
+                logits = model(x_batch, emo_batch)
                 loss = criterion(logits, y_batch)
                 
                 test_loss += loss.item()

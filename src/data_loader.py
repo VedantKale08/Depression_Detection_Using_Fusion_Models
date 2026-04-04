@@ -36,22 +36,22 @@ class DAIC_Dataset(Dataset):
         
         print(f"Building index for {split} split...")
         for file_path in self.files:
-            # We can use np.load with mmap_mode='r' to get shape without full load
-            # Wait, np.savez doesn't support mmap directly for getting shape without loading the array,
-            # but we can load just the metadata. Actually, for a handful of GBs across many files, 
-            # loading lazy chunks is possible or we just load shapes.
             data = np.load(file_path)
             num_chunks = data['chunks'].shape[0]
             label = float(data['label'])
+            # Load session-level emotion vector (14,): audio(7) + text(7)
+            emotion_vec = data['emotion'] if 'emotion' in data else np.zeros(14, dtype=np.float32)
             
             for chunk_idx in range(num_chunks):
                 self.samples.append({
                     'file': file_path,
                     'chunk_idx': chunk_idx,
-                    'label': label
+                    'label': label,
+                    'emotion': emotion_vec   # shared across all chunks of this participant
                 })
                 
         print(f"Found {len(self.samples)} chunks in {len(self.files)} participants.")
+
         
         # For efficiency, we will cache the last loaded file
         self.current_cache_file = None
@@ -65,29 +65,30 @@ class DAIC_Dataset(Dataset):
         file_path = sample_info['file']
         chunk_idx = sample_info['chunk_idx']
         label = sample_info['label']
+        emotion_vec = sample_info['emotion']  # (14,) — audio(7) + text(7)
         
-        # Load file if not in cache (handles sequential loading relatively well if DataLoader workers=0)
-        # Note: with multiprocess dataloading, caching logic needs to be careful, but we load full participant file.
+        # Load file if not in cache
         if self.current_cache_file != file_path:
-            # Load participant data
             data = np.load(file_path)
             self.current_cache_chunks = data['chunks']
             self.current_cache_file = file_path
             
         chunk_data = self.current_cache_chunks[chunk_idx]
-        x = torch.tensor(chunk_data, dtype=torch.float32)
+        x = torch.tensor(chunk_data, dtype=torch.float32)          # (300, 210)
+        emotion = torch.tensor(emotion_vec, dtype=torch.float32)   # (14,)
         y = torch.tensor(label, dtype=torch.float32)
         
+        # Normalize only the temporal sequence (NOT the emotion vector)
         if self.normalize:
             x = (x - self.mean) / self.std
             x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
             
-        # Add random Gaussian noise during training to prevent memorization
+        # Add random Gaussian noise to temporal features during training
         if self.split == "train":
-            noise = torch.randn_like(x) * 0.05  # 5% standard deviation noise
+            noise = torch.randn_like(x) * 0.05
             x = x + noise
             
-        return x, y
+        return x, emotion, y
 
 def get_dataloaders(data_dir, batch_size=32, num_workers=0):
     """
