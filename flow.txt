@@ -1,3 +1,5 @@
+# Commands to run:
+
 To generate emotion vectors for each data in DIAC_WOZ
 python src/extract_test_emotions.py 
 
@@ -9,3 +11,43 @@ python src/preprocess_data.py
 
 To train the model
 python src/train_model.py
+
+
+
+
+# Working:
+
+1. Data Acquisition & Modality Extraction
+Dataset: Downloaded the DAIC-WOZ dataset (189 participants, ~139 GB) containing clinical interviews (audio, video, transcripts) and PHQ-8 depression scores.
+Feature Extraction: You processed the raw media to extract distinct feature sets:
+Audio (COVAREP): Extracted 74 low-level acoustic features per timestamp.
+Facial (OpenFace/CLNF): Extracted 136 facial landmarks and action units per timestamp.
+Audio Emotion: Used a separate model trained on RAVDESS to generate a 7-class emotion probability vector for each session.
+Text Emotion: Built a text classifier to analyze transcripts, generating a 7-class emotion probability vector for each session.
+
+2. Data Preprocessing (preprocess_data.py)
+Alignment: Grouped and aligned the COVAREP and CLNF features to a common 10 Hz timeline.
+Feature Grouping:
+Temporal Features (per-frame): Combined COVAREP (74) + CLNF (136) into 210 features per frame.
+Auxiliary Features (session-level): Grouped Audio Emotion (7) + Text Emotion (7) into a 14-dimensional emotion vector.
+Chunking: Split the continuous 210-dimensional temporal data into 30-second windows (300 frames per chunk) with zero-padding for shorter segments.
+Normalization Prep: Calculated global Mean and Standard Deviation only on the training split to prevent data leakage.
+Storage: Saved each participant's data into highly compressed .npz files organized by train, dev, and test splits.
+
+3. Data Loading (data_loader.py)
+Lazy Loading: Implemented an index-based data loader to efficiently stream the .npz files into PyTorch without crashing RAM.
+Normalization: Applies the pre-calculated Z-score normalization specifically to the temporal features.
+Class Balancing: Implemented a WeightedRandomSampler for the training set to ensure the model sees an equal balance of depressed vs. non-depressed samples, combating dataset imbalance.
+Output: Feeds the model 3-item tuples per batch: (temporal_sequence [batch, 300, 210], emotion_vector [batch, 14], label [batch]).
+
+4. Hybrid Model Architecture (model.py)
+Temporal Processing: Passes the 300x210 frame sequence through a Bidirectional LSTM to understand behavior changes over time.
+Attention Mechanism: Applies Temporal Attention to learn which specific frames in the 30-second window are most indicative of depression, squashing the sequence into a 128-dimensional context vector.
+Late Fusion: Concatenates the LSTM context vector (128-dim) with the session-level emotion vector (14-dim) to create a final 142-dimensional fused representation.
+Classification: Feeds the 142-dim vector into Dense (Fully Connected) layers to output a single logit (the depression prediction).
+
+5. Training & Evaluation (train_model.py)
+Training Loop: Trains the model using BCEWithLogitsLoss and an Adam optimizer, with a scheduler that reduces the learning rate if the model stops improving.
+Validation: Evaluates the model on the dev split after every epoch, tracking Loss, Accuracy, and F1 Score.
+Checkpointing: Saves the best performing model weights based on the validation F1 score.
+Final Output: Loads the best model and runs it against the unseen test split to output the final, true capability of the system (Test Accuracy and Test F1 Score).

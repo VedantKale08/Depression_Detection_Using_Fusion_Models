@@ -53,7 +53,7 @@ def process_participant(participant_id, data_dir, output_dir, chunk_size=300):
     
     # 2. Load CLNF
     # Note: the separator in the CLNF file appears to be comma and sometimes spaces
-    clnf = pd.read_csv(clnf_path, sep=',\s*', engine='python')
+    clnf = pd.read_csv(clnf_path, sep=r',\s*', engine='python')
     clnf['time_window'] = np.floor(clnf['timestamp'] * 10) / 10
     clnf_10hz = clnf.drop(columns=['frame', 'timestamp', 'face_id', 'confidence', 'success'], errors='ignore').groupby('time_window').mean()
     
@@ -97,7 +97,9 @@ def process_participant(participant_id, data_dir, output_dir, chunk_size=300):
 def load_labels(csv_path):
     df = pd.read_csv(csv_path)
     # The columns are Participant_ID, PHQ8_Binary, etc.
-    return dict(zip(df['Participant_ID'].astype(str), df['PHQ8_Binary']))
+    # The test split uses 'PHQ_Binary' instead of 'PHQ8_Binary'
+    label_col = 'PHQ8_Binary' if 'PHQ8_Binary' in df.columns else 'PHQ_Binary'
+    return dict(zip(df['Participant_ID'].astype(str), df[label_col]))
 
 def main():
     base_dir = "data/raw/DAIC_WOZ"
