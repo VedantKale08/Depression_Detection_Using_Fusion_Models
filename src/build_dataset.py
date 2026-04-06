@@ -9,13 +9,16 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
-def process_split(split_df, extractor, root_data_dir, emotion_vectors_dir):
+def process_split(split_df, extractor, root_data_dir, emotion_vectors_dir, cache_dir):
     """
     Process all participants in a split given the dataframe containing their IDs.
+    Uses per-participant cache to skip re-extraction on subsequent runs.
     """
     X = []
     y = []
     metadata = []
+    
+    os.makedirs(cache_dir, exist_ok=True)
     
     # Check DAIC-WOZ usual columns: Participant_ID, PHQ8_Binary, PHQ8_Score
     id_col = 'Participant_ID' if 'Participant_ID' in split_df.columns else split_df.columns[0]
@@ -25,12 +28,21 @@ def process_split(split_df, extractor, root_data_dir, emotion_vectors_dir):
         participant_id = int(row[id_col])
         label = row[binary_label_col] if binary_label_col in split_df.columns else None
         
-        # Extract everything
-        feature_vector = extractor.process_participant(
-            participant_id=participant_id,
-            root_data_dir=root_data_dir,
-            emotion_vectors_dir=emotion_vectors_dir
-        )
+        # Cache path for this participant's feature vector
+        cache_path = os.path.join(cache_dir, f"{participant_id}.npy")
+        
+        if os.path.exists(cache_path):
+            # Load from cache — no expensive inference needed
+            feature_vector = np.load(cache_path)
+        else:
+            # Extract everything
+            feature_vector = extractor.process_participant(
+                participant_id=participant_id,
+                root_data_dir=root_data_dir,
+                emotion_vectors_dir=emotion_vectors_dir
+            )
+            if feature_vector is not None:
+                np.save(cache_path, feature_vector)
         
         if feature_vector is not None:
             X.append(feature_vector)
@@ -55,7 +67,9 @@ def build_and_save_datasets():
     EMOTION_DIR = ROOT_DATA_DIR 
     
     SAVE_DIR = os.path.join(project_root, "data", "processed_features")
+    CACHE_DIR = os.path.join(project_root, "data", "feature_cache")  # Per-participant .npy cache
     os.makedirs(SAVE_DIR, exist_ok=True)
+    os.makedirs(CACHE_DIR, exist_ok=True)
     
     # 1. Init Extractor
     print("Initializing Extractor Models...")
@@ -79,7 +93,7 @@ def build_and_save_datasets():
         
         # In DAIC_WOZ, test split doesn't have labels provided originally (used for server eval)
         # But we extract features anyway
-        X, y, ids = process_split(df, extractor, ROOT_DATA_DIR, EMOTION_DIR)
+        X, y, ids = process_split(df, extractor, ROOT_DATA_DIR, EMOTION_DIR, CACHE_DIR)
         
         dataset_dict[split] = {'X': X, 'y': y, 'ids': ids}
         print(f"Extracted dims for {split}: X={X.shape}, y={y.shape}")
