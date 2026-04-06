@@ -348,6 +348,15 @@ def process_video(video_path, participant_id="USER"):
     # 2. Extract Audio WAV
     wav_path = extract_audio(video_path, out_dir, participant_id)
     
+    # 2.5 Enhance Audio for Inference
+    try:
+        from enhance_audio import enhance_audio
+        enhanced_wav_path = os.path.join(out_dir, f"{participant_id}_AUDIO_ENHANCED.wav")
+        enhance_audio(wav_path, enhanced_wav_path)
+        wav_path = enhanced_wav_path
+    except Exception as e:
+        print(f"[{participant_id}] Audio enhancement failed or not installed, continuing with raw audio: {e}")
+    
     # 3. Formants
     extract_formants(wav_path, out_dir, participant_id)
     
