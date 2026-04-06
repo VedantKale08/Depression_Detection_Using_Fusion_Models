@@ -5,13 +5,15 @@ import seaborn as sns
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 import xgboost as xgb
+import torch
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
     accuracy_score, f1_score, confusion_matrix, 
     roc_curve, auc, precision_recall_curve, average_precision_score
 )
 from data_loader import get_dataloaders, get_test_dataloader
-from train_xgboost import extract_participant_features
+from train_xgboost import extract_features
+from model import DepressionHybridModel
 
 # Set high-quality plotting for research papers
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -40,8 +42,8 @@ def main():
     train_loader, dev_loader = get_dataloaders(data_dir, batch_size=32, num_workers=0)
     test_loader = get_test_dataloader(data_dir, batch_size=32, num_workers=0)
 
-    X_train, y_train = extract_participant_features(train_loader)
-    X_test, y_test = extract_participant_features(test_loader)
+    X_train, y_train = extract_features(train_loader)
+    X_test, y_test = extract_features(test_loader)
 
     if len(X_train) == 0 or len(X_test) == 0:
         print("Not enough data to run analytics.")
@@ -76,14 +78,60 @@ def main():
     for name, model in models.items():
         if name in ['Logistic Regression', 'Linear SVM']:
             model.fit(X_train_scaled, y_train)
-            test_probs[name] = model.predict_proba(X_test_scaled)[:, 1]
+            test_probs[name] = model.predict_proba(X_test_scaled)[:, 1] if hasattr(model, "predict_proba") else model.decision_function(X_test_scaled) # SVM can use decision function if proba fails
+            # Force Probabilities to be 0-1 for SVM decision function if predicting proba fails (or we can just ensure probability=True)
+            if name == 'Linear SVM' and not hasattr(model, "predict_proba"):
+                test_probs[name] = 1 / (1 + np.exp(-test_probs[name]))
+            
             test_preds[name] = model.predict(X_test_scaled)
         else:
             model.fit(X_train, y_train)
             test_probs[name] = model.predict_proba(X_test)[:, 1]
             test_preds[name] = model.predict(X_test)
 
-    print("3. Generating Research Quality Plots...")
+    print("3. Evaluating LSTM Model...")
+    # Add LSTM if weights exist (using the hidden_size=16 configuration)
+    lstm_weights = "weights/best_hybrid_model.pth"
+    if os.path.exists(lstm_weights):
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        lstm_model = DepressionHybridModel(input_size=210, hidden_size=64, num_layers=1)
+        checkpoint = torch.load(lstm_weights, map_location=device, weights_only=False)
+        if 'model_state_dict' in checkpoint:
+            lstm_model.load_state_dict(checkpoint["model_state_dict"])
+        else:
+            lstm_model.load_state_dict(checkpoint)
+            
+        lstm_model.to(device)
+        lstm_model.eval()
+        
+        lstm_probs_list = []
+        lstm_preds_list = []
+        
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(test_loader):
+                if len(batch) == 3:
+                    x_batch, emo_batch, y_batch = batch
+                else:
+                    x_batch, y_batch = batch
+                    emo_batch = torch.zeros((x_batch.shape[0], 14))
+                
+                x_batch = x_batch.to(device)
+                emo_batch = emo_batch.to(device)
+                
+                logits = lstm_model(x_batch, emo_batch)
+                probs = torch.sigmoid(logits).cpu().numpy()
+                preds = (logits > 0).float().cpu().numpy().astype(int)
+                
+                lstm_probs_list.extend(probs)
+                lstm_preds_list.extend(preds)
+                
+        test_probs['Bi-LSTM'] = np.array(lstm_probs_list)
+        test_preds['Bi-LSTM'] = np.array(lstm_preds_list)
+        print(f"  --> Successfully added Bi-LSTM predictions (Count: {len(lstm_preds_list)} chunks).")
+    else:
+        print(f"  --> Bi-LSTM weights not found at {lstm_weights}. Skipping LSTM plot.")
+
+    print("4. Generating Research Quality Plots...")
 
     # --- PLOT 1: ROC Curve Comparison ---
     plt.figure(figsize=(8, 6))
@@ -123,8 +171,13 @@ def main():
     plt.close()
 
     # --- PLOT 3: Confusion Matrices ---
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    for i, name in enumerate(models.keys()):
+    # Dynamically scale grid size based on number of models
+    n_models = len(models.keys()) + (1 if 'Bi-LSTM' in test_probs else 0)
+    fig, axes = plt.subplots(1, n_models, figsize=(6 * n_models, 5))
+    if n_models == 1:
+        axes = [axes]
+        
+    for i, name in enumerate(test_probs.keys()):
         cm = confusion_matrix(y_test, test_preds[name])
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[i],
                     xticklabels=['Healthy', 'Depressed'],
@@ -138,10 +191,13 @@ def main():
     plt.close()
 
     # --- PLOT 4: Probability Distribution (KDE) ---
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    for i, name in enumerate(models.keys()):
-        sns.kdeplot(x=test_probs[name][y_test == 0], shade=True, label='Healthy (0)', color='green', ax=axes[i])
-        sns.kdeplot(x=test_probs[name][y_test == 1], shade=True, label='Depressed (1)', color='red', ax=axes[i])
+    fig, axes = plt.subplots(1, n_models, figsize=(6 * n_models, 5))
+    if n_models == 1:
+        axes = [axes]
+        
+    for i, name in enumerate(test_probs.keys()):
+        sns.kdeplot(x=test_probs[name][y_test == 0], fill=True, label='Healthy (0)', color='green', ax=axes[i])
+        sns.kdeplot(x=test_probs[name][y_test == 1], fill=True, label='Depressed (1)', color='red', ax=axes[i])
         axes[i].axvline(0.5, color='black', linestyle='--', alpha=0.5) # Decision boundary
         axes[i].set_title(f'{name} Output Distribution')
         axes[i].set_xlabel('Predicted Probability of Depression')

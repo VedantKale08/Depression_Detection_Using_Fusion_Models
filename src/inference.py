@@ -125,7 +125,7 @@ def predict(video_path):
         
     # Initialize Multimodal Sequence Model
     model = DepressionHybridModel(input_size=224, hidden_size=128, num_layers=2)
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])    
     model.to(device)
     model.eval()
