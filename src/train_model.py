@@ -47,11 +47,13 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
     # 3. Setup Loss and Optimizer
     # BCEWithLogitsLoss (no pos_weight needed anymore since WeightedRandomSampler balances batches naturally)
     criterion = nn.BCEWithLogitsLoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-3)
-    # ReduceLROnPlateau: halve LR if dev F1 doesn't improve for 3 epochs
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
+    # ReduceLROnPlateau: halve LR if dev F1 doesn't improve for 4 epochs
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=4)
     
     best_f1 = 0.0
+    patience_counter = 0
+    early_stop_patience = 10  # Stop if dev F1 doesn't improve for 10 epochs
     os.makedirs("weights", exist_ok=True)
     
     # 4. Resume from checkpoint if available
@@ -106,25 +108,50 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
         train_acc = accuracy_score(train_targets, train_preds)
         train_f1 = f1_score(train_targets, train_preds, zero_division=0)
         
-        # 5. Validation Loop
+        # 5. Validation Loop — PARTICIPANT-LEVEL aggregation
+        # Each .npz file = one participant. We average logits over all their chunks,
+        # then threshold once. This is how DAIC-WOZ should be evaluated.
         model.eval()
         dev_loss = 0.0
         dev_preds, dev_targets = [], []
         
         if len(dev_loader) > 0:
+            # Build participant -> {logits, label} map
+            participant_logits = {}  # key: file_path, value: list of logit values
+            participant_labels = {}
+            
             with torch.no_grad():
-                for x_batch, emo_batch, y_batch in tqdm(dev_loader, desc=f"Epoch {epoch}/{epochs} [Dev]"):
+                for batch_idx, (x_batch, emo_batch, y_batch) in enumerate(tqdm(dev_loader, desc=f"Epoch {epoch}/{epochs} [Dev]")):
                     x_batch   = x_batch.to(device)
                     emo_batch = emo_batch.to(device)
                     y_batch   = y_batch.to(device)
                     logits = model(x_batch, emo_batch)
                     loss = criterion(logits, y_batch)
-                    
                     dev_loss += loss.item()
-                    preds = (logits > 0.0).float()
                     
-                    dev_preds.extend(preds.cpu().numpy())
-                    dev_targets.extend(y_batch.cpu().numpy())
+                    # Track chunk-level logits per participant using dataset index
+                    # batch_idx * batch_size gives starting sample index
+                    batch_size_actual = x_batch.shape[0]
+                    start_idx = batch_idx * dev_loader.batch_size
+                    logits_np = logits.cpu().numpy()
+                    labels_np = y_batch.cpu().numpy()
+                    
+                    for i in range(batch_size_actual):
+                        sample_idx = start_idx + i
+                        if sample_idx >= len(dev_loader.dataset.samples):
+                            break
+                        file_path = dev_loader.dataset.samples[sample_idx]['file']
+                        if file_path not in participant_logits:
+                            participant_logits[file_path] = []
+                            participant_labels[file_path] = labels_np[i]
+                        participant_logits[file_path].append(logits_np[i])
+            
+            # Aggregate: mean logit per participant, then threshold
+            for fp in participant_logits:
+                avg_logit = np.mean(participant_logits[fp])
+                pred = 1.0 if avg_logit > 0.0 else 0.0
+                dev_preds.append(pred)
+                dev_targets.append(participant_labels[fp])
                     
             dev_loss /= len(dev_loader)
             dev_acc = accuracy_score(dev_targets, dev_preds)
@@ -141,17 +168,24 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
             scheduler.step(dev_f1)
             
         # 6. Save Best Weights (model + optimizer state for full resume)
-        # Save model if F1 score improved on the validation set
+        # Save model if participant-level F1 improved on the validation set
         if len(dev_loader) > 0 and dev_f1 >= best_f1 and dev_f1 > 0:
             best_f1 = dev_f1
+            patience_counter = 0
             torch.save({
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'best_f1': best_f1,
             }, checkpoint_path)
-            print(f"  --> Saved new best model to '{checkpoint_path}' (F1={best_f1:.4f})")
+            print(f"  --> Saved new best model to '{checkpoint_path}' (Participant F1={best_f1:.4f})")
+        else:
+            patience_counter += 1
+            print(f"  --> No improvement. Patience: {patience_counter}/{early_stop_patience}")
+            if patience_counter >= early_stop_patience:
+                print(f"Early stopping triggered after {epoch} epochs.")
+                break
         # Fallback: Save if no dev set and train F1 improves
-        elif len(dev_loader) == 0 and train_f1 >= best_f1:
+        if len(dev_loader) == 0 and train_f1 >= best_f1:
             best_f1 = train_f1
             torch.save({
                 'model_state_dict': model.state_dict(),
@@ -160,8 +194,8 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
             }, checkpoint_path)
             print(f"  --> Saved model to '{checkpoint_path}' (Train F1={best_f1:.4f})")
 
-    # 7. Evaluate on Test Data
-    print("\\n--- Evaluating Best Model on Test Data ---")
+    # 7. Evaluate on Test Data — PARTICIPANT-LEVEL aggregation
+    print("\n--- Evaluating Best Model on Test Data ---")
     test_loader = get_test_dataloader(data_dir, batch_size=batch_size, num_workers=0)
     
     if len(test_loader.dataset) == 0:
@@ -178,31 +212,49 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
         
         model.eval()
         test_loss = 0.0
-        test_preds, test_targets = [], []
+        participant_logits = {}
+        participant_labels = {}
         
         with torch.no_grad():
-            for x_batch, emo_batch, y_batch in tqdm(test_loader, desc="[Test Evaluate]"):
+            for batch_idx, (x_batch, emo_batch, y_batch) in enumerate(tqdm(test_loader, desc="[Test Evaluate]")):
                 x_batch   = x_batch.to(device)
                 emo_batch = emo_batch.to(device)
                 y_batch   = y_batch.to(device)
                 logits = model(x_batch, emo_batch)
                 loss = criterion(logits, y_batch)
-                
                 test_loss += loss.item()
-                preds = (logits > 0.0).float()
                 
-                test_preds.extend(preds.cpu().numpy())
-                test_targets.extend(y_batch.cpu().numpy())
+                batch_size_actual = x_batch.shape[0]
+                start_idx = batch_idx * test_loader.batch_size
+                logits_np = logits.cpu().numpy()
+                labels_np = y_batch.cpu().numpy()
+                
+                for i in range(batch_size_actual):
+                    sample_idx = start_idx + i
+                    if sample_idx >= len(test_loader.dataset.samples):
+                        break
+                    file_path = test_loader.dataset.samples[sample_idx]['file']
+                    if file_path not in participant_logits:
+                        participant_logits[file_path] = []
+                        participant_labels[file_path] = labels_np[i]
+                    participant_logits[file_path].append(logits_np[i])
+        
+        test_preds, test_targets = [], []
+        for fp in participant_logits:
+            avg_logit = np.mean(participant_logits[fp])
+            pred = 1.0 if avg_logit > 0.0 else 0.0
+            test_preds.append(pred)
+            test_targets.append(participant_labels[fp])
                 
         test_loss /= len(test_loader)
         test_acc = accuracy_score(test_targets, test_preds)
         test_f1 = f1_score(test_targets, test_preds, zero_division=0)
         
-        print("\\n=== Test Results ===")
-        print(f"Test Loss: {test_loss:.4f}")
-        print(f"Test Accuracy: {test_acc:.4f}")
-        print(f"Test F1 Score: {test_f1:.4f}")
-        print("====================\\n")
+        print(f"\n=== Test Results (Participant-Level, N={len(test_preds)}) ===")
+        print(f"Test Loss (chunk-avg): {test_loss:.4f}")
+        print(f"Test Accuracy:         {test_acc:.4f}")
+        print(f"Test F1 Score:         {test_f1:.4f}")
+        print("="*40)
 
 if __name__ == "__main__":
     import argparse
