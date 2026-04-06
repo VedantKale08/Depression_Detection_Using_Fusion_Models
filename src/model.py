@@ -70,13 +70,84 @@ class DepressionHybridModel(nn.Module):
         logits = self.fc2(dense_out)
         return logits.squeeze(1)
 
+import math
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        seq_len = x.size(1)
+        x = x + self.pe[:seq_len, :].unsqueeze(0)
+        return x
+
+class DepressionTransformerModel(nn.Module):
+    def __init__(self, input_size=210, d_model=128, nhead=4, num_layers=2, dropout=0.5):
+        """
+        Transformer-based Multimodal Model for Depression Detection.
+        """
+        super(DepressionTransformerModel, self).__init__()
+        
+        self.input_projection = nn.Linear(input_size, d_model)
+        self.pos_encoder = PositionalEncoding(d_model)
+        
+        encoder_layers = nn.TransformerEncoderLayer(
+            d_model=d_model, 
+            nhead=nhead, 
+            dim_feedforward=d_model*2, 
+            dropout=dropout, 
+            batch_first=True
+        )
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers)
+        
+        self.layer_norm = nn.LayerNorm(d_model)
+        
+        emotion_dim = 14
+        self.fc1 = nn.Linear(d_model + emotion_dim, 64)
+        self.relu = nn.ReLU()
+        self.dropout_fc = nn.Dropout(dropout)
+        self.fc2 = nn.Linear(64, 1)
+        
+    def forward(self, x, emotion_vec):
+        # x: (Batch, Time_Steps, 210)
+        x = self.input_projection(x) # (Batch, Time_Steps, d_model)
+        x = self.pos_encoder(x)
+        
+        # Transformer Context
+        x = self.transformer_encoder(x) # (Batch, Time_Steps, d_model)
+        
+        # Average pooling over time steps
+        context_vector = torch.mean(x, dim=1) # (Batch, d_model)
+        norm_out = self.layer_norm(context_vector)
+        
+        # Fuse with emotion
+        fused = torch.cat([norm_out, emotion_vec], dim=1) # (Batch, d_model + 14)
+        
+        dense_out = self.fc1(fused)
+        dense_out = self.relu(dense_out)
+        dense_out = self.dropout_fc(dense_out)
+        
+        logits = self.fc2(dense_out)
+        return logits.squeeze(1)
+
 if __name__ == "__main__":
     print("Testing Model Dimensionality...")
-    model = DepressionHybridModel(input_size=210, hidden_size=64, num_layers=1, dropout=0.5)
     dummy_x = torch.randn(8, 300, 210)   # Batch=8, 300 frames, 210 temporal features
     dummy_emo = torch.randn(8, 14)        # Batch=8, 14-dim emotion vector
-    dummy_output = model(dummy_x, dummy_emo)
-    print(f"Input X Shape:       {dummy_x.shape}")
-    print(f"Input Emotion Shape: {dummy_emo.shape}")
-    print(f"Output Shape:        {dummy_output.shape}")
+    
+    print("\n[Bi-LSTM Model]")
+    model_lstm = DepressionHybridModel(input_size=210, hidden_size=64, num_layers=1, dropout=0.5)
+    out_lstm = model_lstm(dummy_x, dummy_emo)
+    print(f"Output Shape:        {out_lstm.shape}")
+    
+    print("\n[Transformer Model]")
+    model_tx = DepressionTransformerModel()
+    out_tx = model_tx(dummy_x, dummy_emo)
+    print(f"Output Shape:        {out_tx.shape}")
     print("Test Successful!")

@@ -18,10 +18,10 @@ if src_path not in sys.path:
 
 from tqdm import tqdm
 from data_loader import get_dataloaders, get_test_dataloader
-from model import DepressionHybridModel
+from model import DepressionHybridModel, DepressionTransformerModel
 from sklearn.metrics import f1_score, accuracy_score
 
-def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_rate=1e-3, device=None, resume=True):
+def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_rate=1e-3, device=None, resume=True, model_type="bi-lstm"):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
@@ -36,7 +36,12 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
     
     # 2. Setup Model
     # input_size=210: COVAREP(74) + CLNF(136) — emotions are auxiliary inputs at the FC head
-    model = DepressionHybridModel(input_size=210, hidden_size=64, num_layers=1, dropout=0.5)
+    if model_type == "transformer":
+        model = DepressionTransformerModel(input_size=210, d_model=128, nhead=4, num_layers=2, dropout=0.5)
+        checkpoint_path = "weights/best_transformer_model.pth"
+    else:
+        model = DepressionHybridModel(input_size=210, hidden_size=64, num_layers=1, dropout=0.5)
+        checkpoint_path = "weights/best_hybrid_model.pth"
     model.to(device)
     
     # 3. Setup Loss and Optimizer
@@ -50,7 +55,6 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
     os.makedirs("weights", exist_ok=True)
     
     # 4. Resume from checkpoint if available
-    checkpoint_path = "weights/best_hybrid_model.pth"
     if resume and os.path.exists(checkpoint_path):
         checkpoint = torch.load(checkpoint_path, map_location=device)
         if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
@@ -204,10 +208,11 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Train the DAIC-WOZ Hybrid Depression Model")
     parser.add_argument("--data_dir", type=str, default="data/processed", help="Directory containing processed chunks")
+    parser.add_argument("--model", type=str, choices=["bi-lstm", "transformer"], default="bi-lstm", help="Model architecture to use")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=30, help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--no-resume", action="store_true", help="Start training from scratch, ignoring any saved checkpoint")
     args = parser.parse_args()
     
-    train_model(data_dir=args.data_dir, batch_size=args.batch_size, epochs=args.epochs, learning_rate=args.lr, resume=not args.no_resume)
+    train_model(data_dir=args.data_dir, batch_size=args.batch_size, epochs=args.epochs, learning_rate=args.lr, resume=not args.no_resume, model_type=args.model)
