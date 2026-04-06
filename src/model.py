@@ -2,12 +2,12 @@ import torch
 import torch.nn as nn
 
 class DepressionHybridModel(nn.Module):
-    def __init__(self, input_size=210, hidden_size=64, num_layers=1, dropout=0.5):
+    def __init__(self, input_size=112, hidden_size=64, num_layers=1, dropout=0.5):
         """
         Multimodal Sequence Model for Depression Detection based on Audio, Text, and Facial features.
         
         Args:
-            input_size (int): Temporal features per timestep — COVAREP(74)+CLNF(136)=210.
+            input_size (int): Temporal features per timestep — COVAREP(74)+AUs(20)+Pose(6)+Gaze(12)=112.
             hidden_size (int): Number of nodes inside the hidden state of the LSTM.
             num_layers (int): Depth of the LSTM.
             dropout (float): Dropout probability between LSTM layers.
@@ -15,7 +15,7 @@ class DepressionHybridModel(nn.Module):
         super(DepressionHybridModel, self).__init__()
         
         # We use batch_first=True so input expects (Batch, Seq_Len, Features)
-        # Input: COVAREP (74) + CLNF (136) = 210 temporal features per frame
+        # Input: COVAREP (74) + AUs (20) + Pose (6) + Gaze (12) = 112 temporal features per frame
         self.lstm = nn.LSTM(
             input_size=input_size,
             hidden_size=hidden_size,
@@ -43,7 +43,7 @@ class DepressionHybridModel(nn.Module):
     def forward(self, x, emotion_vec):
         """
         Forward pass.
-        x:           (Batch, Time_Steps, 210)  — temporal COVAREP + CLNF features
+        x:           (Batch, Time_Steps, 112)  — temporal features
         emotion_vec: (Batch, 14)               — session-level audio(7) + text(7) emotions
         """
         # LSTM over temporal sequence
@@ -88,7 +88,7 @@ class PositionalEncoding(nn.Module):
         return x
 
 class DepressionTransformerModel(nn.Module):
-    def __init__(self, input_size=210, d_model=128, nhead=4, num_layers=2, dropout=0.5):
+    def __init__(self, input_size=112, d_model=128, nhead=4, num_layers=2, dropout=0.5):
         """
         Transformer-based Multimodal Model for Depression Detection.
         """
@@ -115,7 +115,7 @@ class DepressionTransformerModel(nn.Module):
         self.fc2 = nn.Linear(64, 1)
         
     def forward(self, x, emotion_vec):
-        # x: (Batch, Time_Steps, 210)
+        # x: (Batch, Time_Steps, 112)
         x = self.input_projection(x) # (Batch, Time_Steps, d_model)
         x = self.pos_encoder(x)
         
@@ -138,11 +138,11 @@ class DepressionTransformerModel(nn.Module):
 
 if __name__ == "__main__":
     print("Testing Model Dimensionality...")
-    dummy_x = torch.randn(8, 300, 210)   # Batch=8, 300 frames, 210 temporal features
+    dummy_x = torch.randn(8, 300, 112)   # Batch=8, 300 frames, 112 temporal features
     dummy_emo = torch.randn(8, 14)        # Batch=8, 14-dim emotion vector
     
     print("\n[Bi-LSTM Model]")
-    model_lstm = DepressionHybridModel(input_size=210, hidden_size=64, num_layers=1, dropout=0.5)
+    model_lstm = DepressionHybridModel(input_size=112, hidden_size=64, num_layers=1, dropout=0.5)
     out_lstm = model_lstm(dummy_x, dummy_emo)
     print(f"Output Shape:        {out_lstm.shape}")
     

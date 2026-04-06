@@ -37,44 +37,72 @@ def process_participant(participant_id, data_dir, output_dir, chunk_size=300):
     part_dir = os.path.join(data_dir, f"{participant_id}_P")
     
     covarep_path = os.path.join(part_dir, f"{participant_id}_COVAREP.csv")
-    clnf_path = os.path.join(part_dir, f"{participant_id}_CLNF_features.txt")
+    au_path = os.path.join(part_dir, f"{participant_id}_CLNF_AUs.txt")
+    pose_path = os.path.join(part_dir, f"{participant_id}_CLNF_pose.txt")
+    gaze_path = os.path.join(part_dir, f"{participant_id}_CLNF_gaze.txt")
     audio_emo_path = os.path.join(part_dir, f"{participant_id}_audio_emotion.npy")
     text_emo_path = os.path.join(part_dir, f"{participant_id}_text_emotion.npy")
     
-    # Check if necessary files exist
-    if not (os.path.exists(covarep_path) and os.path.exists(clnf_path)):
+    # Audio features are strict requirement
+    if not os.path.exists(covarep_path):
         return None
-    
-    # 1. Load COVAREP
+        
+    def load_and_group(path):
+        if not os.path.exists(path):
+            return pd.DataFrame()
+        try:
+            df = pd.read_csv(path, sep=r',\s*', engine='python')
+            df.columns = df.columns.str.strip()
+            df['time_window'] = np.floor(df['timestamp'] * 10) / 10
+            return df.drop(columns=['frame', 'timestamp', 'face_id', 'confidence', 'success'], errors='ignore').groupby('time_window').mean()
+        except:
+            return pd.DataFrame()
+            
+    # 1. Load COVAREP (acts as time master)
     covarep = pd.read_csv(covarep_path, header=None)
     covarep['timestamp'] = np.arange(len(covarep)) * 0.01
     covarep['time_window'] = np.floor(covarep['timestamp'] * 10) / 10
-    covarep_10hz = covarep.drop(columns=['timestamp']).groupby('time_window').mean()
+    merged = covarep.drop(columns=['timestamp']).groupby('time_window').mean()
     
-    # 2. Load CLNF
-    # Note: the separator in the CLNF file appears to be comma and sometimes spaces
-    clnf = pd.read_csv(clnf_path, sep=r',\s*', engine='python')
-    clnf['time_window'] = np.floor(clnf['timestamp'] * 10) / 10
-    clnf_10hz = clnf.drop(columns=['frame', 'timestamp', 'face_id', 'confidence', 'success'], errors='ignore').groupby('time_window').mean()
+    # 2. Load Face Features
+    au_10hz = load_and_group(au_path)
+    pose_10hz = load_and_group(pose_path)
+    gaze_10hz = load_and_group(gaze_path)
     
-    # Merge
-    merged = pd.merge(covarep_10hz, clnf_10hz, left_index=True, right_index=True, how='outer')
-    merged = merged.replace([np.inf, -np.inf], np.nan)
-    merged = merged.ffill().fillna(0) # Forward fill, then fill remaining with 0
+    # Join into one Master DataFrame aligned by COVAREP time
+    face_df = pd.DataFrame(index=merged.index)
+    if not au_10hz.empty:
+        face_df = face_df.join(au_10hz, how='left')
+    if not pose_10hz.empty:
+        face_df = face_df.join(pose_10hz, how='left')
+    if not gaze_10hz.empty:
+        face_df = face_df.join(gaze_10hz, how='left')
+        
+    face_df = face_df.ffill().fillna(0) # Forward fill, then fill remaining with 0
     
     length = len(merged)
     
-    # 3. Load emotions
+    # 3. Load emotions (Session Level)
     audio_emotion = np.load(audio_emo_path) if os.path.exists(audio_emo_path) else np.zeros((7,))
     text_emotion = np.load(text_emo_path) if os.path.exists(text_emo_path) else np.zeros((7,))
     
-    # Per-frame features: COVAREP (74) + CLNF (136) = 210
-    # Audio/Text emotions are saved separately as auxiliary features — NOT tiled per frame.
-    # This prevents the model from memorizing participant identity via static emotion signatures.
+    # Prepare standard dimensions
+    au_cols = ['AU01_r', 'AU02_r', 'AU04_r', 'AU05_r', 'AU06_r', 'AU09_r', 'AU10_r', 'AU12_r', 'AU14_r', 'AU15_r', 'AU17_r', 'AU20_r', 'AU25_r', 'AU26_r', 'AU04_c', 'AU12_c', 'AU15_c', 'AU23_c', 'AU28_c', 'AU45_c']
+    pose_cols = ['Tx', 'Ty', 'Tz', 'Rx', 'Ry', 'Rz']
+    gaze_cols = ['x_0', 'y_0', 'z_0', 'x_1', 'y_1', 'z_1', 'x_h0', 'y_h0', 'z_h0', 'x_h1', 'y_h1', 'z_h1']
+    
+    au_vals = face_df.reindex(columns=au_cols, fill_value=0.0).values
+    pose_vals = face_df.reindex(columns=pose_cols, fill_value=0.0).values
+    gaze_vals = face_df.reindex(columns=gaze_cols, fill_value=0.0).values
+    
+    # Per-frame features: COVAREP (74) + AUs (20) + Pose (6) + Gaze (12) = 112
     features = np.concatenate([
         merged.iloc[:, :74].values,   # COVAREP (74)
-        merged.iloc[:, 74:].values,   # CLNF (136)
+        au_vals,                      # AUs (20)
+        pose_vals,                    # Pose (6)
+        gaze_vals                     # Gaze (12)
     ], axis=1)
+    
     features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
     
     # Chunking

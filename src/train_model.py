@@ -35,12 +35,12 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
     print(f"Data Loaded! Train subsets: {len(train_loader.dataset)} | Dev subsets: {len(dev_loader.dataset)}")
     
     # 2. Setup Model
-    # input_size=210: COVAREP(74) + CLNF(136) — emotions are auxiliary inputs at the FC head
+    # input_size=112: COVAREP(74) + Face(38) — emotions are auxiliary inputs at the FC head
     if model_type == "transformer":
-        model = DepressionTransformerModel(input_size=210, d_model=128, nhead=4, num_layers=2, dropout=0.5)
+        model = DepressionTransformerModel(input_size=112, d_model=128, nhead=4, num_layers=2, dropout=0.5)
         checkpoint_path = "weights/best_transformer_model.pth"
     else:
-        model = DepressionHybridModel(input_size=210, hidden_size=64, num_layers=1, dropout=0.5)
+        model = DepressionHybridModel(input_size=112, hidden_size=64, num_layers=1, dropout=0.5)
         checkpoint_path = "weights/best_hybrid_model.pth"
     model.to(device)
     
