@@ -46,13 +46,15 @@ def process_split(split_df, extractor, root_data_dir, emotion_vectors_dir):
 
 
 def build_and_save_datasets():
-    # Paths configuration
-    ROOT_DATA_DIR = "/home/vedant/MyProjects/FInalYearProject/Audio+Face/data/raw/DAIC_WOZ"
-    EMOTION_DIR = "/home/vedant/MyProjects/FInalYearProject/Audio+Face/data/input" # Emotion npys are in DAIC_WOZ or input!
+    # Paths configuration dynamically resolved
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
+    
+    ROOT_DATA_DIR = os.path.join(project_root, "data", "raw", "DAIC_WOZ")
     # Update EMOTION_DIR based on where most .npy are stored. We'll search in both input/ and raw/DAIC_WOZ/ 
     EMOTION_DIR = ROOT_DATA_DIR 
     
-    SAVE_DIR = "/home/vedant/MyProjects/FInalYearProject/Audio+Face/data/processed_features"
+    SAVE_DIR = os.path.join(project_root, "data", "processed_features")
     os.makedirs(SAVE_DIR, exist_ok=True)
     
     # 1. Init Extractor

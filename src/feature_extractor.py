@@ -80,6 +80,24 @@ class MultimodalFeatureExtractor:
         
         return np.concatenate([mean_au, std_au, max_au])
 
+    def extract_covarep_features(self, covarep_path):
+        """ Extract statistical aggregates (mean, std, max) from COVAREP 74-dim acoustic features """
+        if not os.path.exists(covarep_path):
+            return None
+        try:
+            df = pd.read_csv(covarep_path, header=None)
+            data = df.values.astype(np.float32)
+            data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
+            # Take only the first 74 columns (standard COVAREP size)
+            data = data[:, :74]
+            mean_c = np.mean(data, axis=0)
+            std_c  = np.std(data, axis=0)
+            max_c  = np.max(data, axis=0)
+            return np.concatenate([mean_c, std_c, max_c])  # 74*3 = 222 dims
+        except Exception as e:
+            print(f"Error extracting COVAREP from {covarep_path}: {e}")
+            return None
+
     def load_emotion_vectors(self, text_emo_path, audio_emo_path):
         """ Load the explicitly extracted 7-dimensional emotion vectors """
         try:
@@ -110,6 +128,7 @@ class MultimodalFeatureExtractor:
         transcript_path = os.path.join(part_dir, f"{participant_id}_TRANSCRIPT.csv")
         audio_path = os.path.join(part_dir, f"{participant_id}_AUDIO.wav")
         au_path = os.path.join(part_dir, f"{participant_id}_CLNF_AUs.txt")
+        covarep_path = os.path.join(part_dir, f"{participant_id}_COVAREP.csv")
         
         # Depending on where the emotions are stored
         # Example: data/raw/DAIC_WOZ/300_P/300_text_emotion.npy or inside data/input/...
@@ -118,17 +137,26 @@ class MultimodalFeatureExtractor:
 
         # 1. Text
         text_feats = self.extract_text_features(transcript_path)
-        # 2. Audio
+        # 2. Audio (OpenSMILE eGeMAPS)
         audio_feats = self.extract_audio_features(audio_path)
         # 3. Video (Face AUs)
         video_feats = self.extract_video_features(au_path)
-        # 4. Emotions
+        # 4. COVAREP acoustic features
+        covarep_feats = self.extract_covarep_features(covarep_path)
+        # 5. Emotions
         emotion_feats = self.load_emotion_vectors(text_emo_path, audio_emo_path)
 
-        if text_feats is None or audio_feats is None or video_feats is None or emotion_feats is None:
-            print(f"Missing modalities for participant {participant_id}. Skipping or returning what's available.")
+        if text_feats is None or audio_feats is None or emotion_feats is None:
+            print(f"Missing critical modalities for participant {participant_id}. Skipping.")
             return None
         
+        # Build feature list — use zeros if face/covarep missing (non-critical)
+        parts = [text_feats, audio_feats]
+        parts.append(video_feats if video_feats is not None else np.zeros(60))
+        parts.append(covarep_feats if covarep_feats is not None else np.zeros(222))
+        parts.append(emotion_feats)
+        
         # Concatenate everything into a robust 1D vector
-        final_vector = np.concatenate([text_feats, audio_feats, video_feats, emotion_feats])
+        # Text(768) + Audio(88) + AUs(60) + COVAREP(222) + Emotions(14) = 1152
+        final_vector = np.concatenate(parts)
         return final_vector

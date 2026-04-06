@@ -10,8 +10,15 @@ from imblearn.over_sampling import SMOTE
 import warnings
 warnings.filterwarnings("ignore")
 
-def load_data(save_dir="/home/vedant/MyProjects/FInalYearProject/Audio+Face/data/processed_features"):
+def _default_save_dir():
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
+    return os.path.join(project_root, "data", "processed_features")
+
+def load_data(save_dir=None):
     """ Load the numpy arrays for model training """
+    if save_dir is None:
+        save_dir = _default_save_dir()
     try:
         X_train = np.load(os.path.join(save_dir, "X_train_scaled.npy"))
         y_train = np.load(os.path.join(save_dir, "y_train.npy"))
@@ -29,6 +36,11 @@ def evaluate_model(name, y_true, y_pred):
     print(classification_report(y_true, y_pred))
     print(f"Macro F1: {f1_score(y_true, y_pred, average='macro'):.3f}")
     print("Confusion Matrix:\n", confusion_matrix(y_true, y_pred), "\n")
+
+def predict_with_threshold(model, X, threshold=0.35):
+    """ Use probability threshold instead of default 0.5 to improve depression recall """
+    proba = model.predict_proba(X)[:, 1]  # Probability of class 1 (depressed)
+    return (proba >= threshold).astype(int)
 
 def run_pipeline():
     X_train, y_train, X_dev, y_dev = load_data()
@@ -56,27 +68,38 @@ def run_pipeline():
 
     # 3. Model Training & Evaluation
     print("\n[Step 3] Training ML Classifiers\n")
+    THRESHOLD = 0.35  # Lower threshold → catch more depressed cases (improves recall for class 1)
     
-    # --- Logistic Regression ---
-    lr = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42)
-    lr.fit(X_train_resampled, y_train_resampled)
-    y_pred_lr = lr.predict(X_dev_pca)
+    # --- Logistic Regression with grid search ---
+    from sklearn.model_selection import GridSearchCV
+    lr_params = {'C': [0.01, 0.1, 1, 5, 10]}
+    lr_cv = GridSearchCV(LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42),
+                         lr_params, scoring='f1_macro', cv=5)
+    lr_cv.fit(X_train_resampled, y_train_resampled)
+    lr = lr_cv.best_estimator_
+    print(f"Best LR C={lr_cv.best_params_['C']}")
+    y_pred_lr = predict_with_threshold(lr, X_dev_pca, THRESHOLD)
     evaluate_model("Logistic Regression", y_dev, y_pred_lr)
     
-    # --- Support Vector Machine ---
-    svm = SVC(kernel='rbf', class_weight='balanced', probability=True, random_state=42)
-    svm.fit(X_train_resampled, y_train_resampled)
-    y_pred_svm = svm.predict(X_dev_pca)
+    # --- Support Vector Machine with grid search ---
+    svm_params = {'C': [0.1, 1, 5, 10], 'gamma': ['scale', 'auto']}
+    svm_cv = GridSearchCV(SVC(kernel='rbf', class_weight='balanced', probability=True, random_state=42),
+                          svm_params, scoring='f1_macro', cv=5)
+    svm_cv.fit(X_train_resampled, y_train_resampled)
+    svm = svm_cv.best_estimator_
+    print(f"Best SVM C={svm_cv.best_params_['C']}, gamma={svm_cv.best_params_['gamma']}")
+    y_pred_svm = predict_with_threshold(svm, X_dev_pca, THRESHOLD)
     evaluate_model("SVM (RBF Kernel)", y_dev, y_pred_svm)
     
     # --- XGBoost ---
-    xgb = XGBClassifier(
-        scale_pos_weight=len(y_train_resampled[y_train_resampled==0])/len(y_train_resampled[y_train_resampled==1]), 
-        random_state=42,
-        eval_metric='logloss'
-    )
-    xgb.fit(X_train_resampled, y_train_resampled)
-    y_pred_xgb = xgb.predict(X_dev_pca)
+    xgb_params = {'n_estimators': [100, 200], 'max_depth': [3, 5], 'learning_rate': [0.05, 0.1]}
+    xgb_cv = GridSearchCV(XGBClassifier(
+        scale_pos_weight=len(y_train[y_train==0])/max(1,len(y_train[y_train==1])), 
+        random_state=42, eval_metric='logloss'), xgb_params, scoring='f1_macro', cv=5)
+    xgb_cv.fit(X_train_resampled, y_train_resampled)
+    xgb = xgb_cv.best_estimator_
+    print(f"Best XGB params: {xgb_cv.best_params_}")
+    y_pred_xgb = predict_with_threshold(xgb, X_dev_pca, THRESHOLD)
     evaluate_model("XGBoost", y_dev, y_pred_xgb)
 
 if __name__ == "__main__":
