@@ -53,7 +53,7 @@ def process_participant(participant_id, data_dir, output_dir, chunk_size=300):
     
     # 2. Load CLNF
     # Note: the separator in the CLNF file appears to be comma and sometimes spaces
-    clnf = pd.read_csv(clnf_path, sep=',\s*', engine='python')
+    clnf = pd.read_csv(clnf_path, sep=r',\s*', engine='python')
     clnf['time_window'] = np.floor(clnf['timestamp'] * 10) / 10
     clnf_10hz = clnf.drop(columns=['frame', 'timestamp', 'face_id', 'confidence', 'success'], errors='ignore').groupby('time_window').mean()
     
