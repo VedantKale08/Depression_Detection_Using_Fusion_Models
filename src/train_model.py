@@ -17,11 +17,31 @@ if src_path not in sys.path:
     sys.path.insert(0, src_path)
 
 from tqdm import tqdm
+import torch.nn.functional as F
 from data_loader import get_dataloaders, get_test_dataloader
 from model import DepressionHybridModel, DepressionTransformerModel
 from sklearn.metrics import f1_score, accuracy_score
 
-def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_rate=1e-3, device=None, resume=True, model_type="bi-lstm"):
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=0.25, gamma=2.0, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        BCE_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
+        pt = torch.exp(-BCE_loss)
+        focal_loss = self.alpha * (1-pt)**self.gamma * BCE_loss
+
+        if self.reduction == 'mean':
+            return torch.mean(focal_loss)
+        elif self.reduction == 'sum':
+            return torch.sum(focal_loss)
+        else:
+            return focal_loss
+
+def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_rate=1e-3, device=None, resume=True, model_type="bi-lstm", hidden_size=16):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
@@ -40,14 +60,15 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
         model = DepressionTransformerModel(input_size=210, d_model=128, nhead=4, num_layers=2, dropout=0.5)
         checkpoint_path = "weights/best_transformer_model.pth"
     else:
-        model = DepressionHybridModel(input_size=210, hidden_size=64, num_layers=1, dropout=0.5)
-        checkpoint_path = "weights/best_hybrid_model.pth"
+        # Reduced hidden_size from 64 to the passed parameter (default 16) to combat overfitting
+        model = DepressionHybridModel(input_size=210, hidden_size=hidden_size, num_layers=1, dropout=0.6)
+        checkpoint_path = f"weights/best_hybrid_model_hs{hidden_size}.pth"
     model.to(device)
     
     # 3. Setup Loss and Optimizer
-    # BCEWithLogitsLoss (no pos_weight needed anymore since WeightedRandomSampler balances batches naturally)
-    criterion = nn.BCEWithLogitsLoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
+    # Replaced BCEWithLogitsLoss with FocalLoss to handle depressed vs non-depressed imbalance
+    criterion = FocalLoss(alpha=0.25, gamma=2.0)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-3)
     # ReduceLROnPlateau: halve LR if dev F1 doesn't improve for 4 epochs
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=4)
     
@@ -264,7 +285,16 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=30, help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--hidden_size", type=int, default=16, help="Hidden size for LSTM. Keep small (16-32) for small datasets.")
     parser.add_argument("--no-resume", action="store_true", help="Start training from scratch, ignoring any saved checkpoint")
     args = parser.parse_args()
     
-    train_model(data_dir=args.data_dir, batch_size=args.batch_size, epochs=args.epochs, learning_rate=args.lr, resume=not args.no_resume, model_type=args.model)
+    train_model(
+        data_dir=args.data_dir, 
+        batch_size=args.batch_size, 
+        epochs=args.epochs, 
+        learning_rate=args.lr, 
+        resume=not args.no_resume, 
+        model_type=args.model,
+        hidden_size=args.hidden_size
+    )
