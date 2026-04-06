@@ -83,6 +83,31 @@ def process_csv(csv_path, out_dir, participant_id):
         print(f"[{participant_id}] -> Saved {participant_id}_CLNF_pose.txt")
 
 
+def remove_nested_hierarchy(p_dir, participant_id):
+    """
+    Often DAIC_WOZ archives extract into a nested folder, e.g., 715_P/715_P/...
+    This function elevates all files to the parent p_dir and removes the inner folder.
+    """
+    nested_dir = os.path.join(p_dir, f"{participant_id}_P")
+    if os.path.exists(nested_dir) and os.path.isdir(nested_dir):
+        print(f"[{participant_id}] Found nested folder structure. Moving files up to parent directory...")
+        for item in os.listdir(nested_dir):
+            src = os.path.join(nested_dir, item)
+            dst = os.path.join(p_dir, item)
+            try:
+                if os.path.exists(dst):
+                    if os.path.isdir(dst):
+                        shutil.rmtree(dst)
+                    else:
+                        os.remove(dst)
+                shutil.move(src, p_dir)
+            except Exception as e:
+                print(f"[{participant_id}] Error moving {item}: {e}")
+        try:
+            os.rmdir(nested_dir)
+        except OSError:
+            shutil.rmtree(nested_dir, ignore_errors=True)
+
 def main():
     raw_dir = "data/raw/DAIC_WOZ"
     if not os.path.exists(raw_dir):
@@ -96,7 +121,10 @@ def main():
         participant_id = os.path.basename(p_dir).split("_")[0]
         print(f"\\n--- Checking participant {participant_id} ({os.path.basename(p_dir)}) ---")
         
-        # 0. Ensure transcript matches 300_TRANSCRIPT.csv format
+        # 0.1 Flatten nested participant folder if present
+        remove_nested_hierarchy(p_dir, participant_id)
+        
+        # 0.2 Ensure transcript matches 300_TRANSCRIPT.csv format
         transcript_out = os.path.join(p_dir, f"{participant_id}_TRANSCRIPT.csv")
         if not os.path.exists(transcript_out):
             trans_candidates = [f"{participant_id}_Transcript.csv", f"{participant_id}_transcript.csv"]
@@ -136,41 +164,50 @@ def main():
             np.save(text_emo_out, vec)
             print(f"[{participant_id}] -> Saved {participant_id}_text_emotion.npy")
 
-        # 2. Process OpenFace CSV inside the "features" folder (if it exists)
-        features_dir = os.path.join(p_dir, "features")
-        if os.path.exists(features_dir):
-            # Check for slightly varied file naming conventions in the extended dataset
-            pose_csv_files = glob.glob(os.path.join(features_dir, "*Pose_gaze_AUs.csv")) + \
-                             glob.glob(os.path.join(features_dir, "*Pose_Gaze_AUs.csv"))
-            if pose_csv_files:
-                pose_csv = pose_csv_files[0]
-                au_out = os.path.join(p_dir, f"{participant_id}_CLNF_AUs.txt")
-                
-                # If AU file isn't there, we assume pose/gaze aren't there and we extract them all
-                if not os.path.exists(au_out):
+        # 2. Process OpenFace CSV (Search dynamically in both root and 'features' folder)
+        pose_csv = None
+        search_dirs = [p_dir, os.path.join(p_dir, "features")]
+        for sdir in search_dirs:
+            if os.path.exists(sdir):
+                for fname in os.listdir(sdir):
+                    lname = fname.lower()
+                    if ("openface" in lname or "pose_gaze" in lname) and lname.endswith(".csv"):
+                        pose_csv = os.path.join(sdir, fname)
+                        break
+            if pose_csv:
+                break
+        
+        au_out = os.path.join(p_dir, f"{participant_id}_CLNF_AUs.txt")
+        if pose_csv:
+            # If AU file isn't there, extract
+            if not os.path.exists(au_out):
+                try:
                     process_csv(pose_csv, p_dir, participant_id)
-                else:
-                    print(f"[{participant_id}] AUs/Pose/Gaze already extracted in raw directory.")
+                except Exception as e:
+                    print(f"[{participant_id}] Failed to process OpenFace CSV: {e}")
             else:
-                print(f"[{participant_id}] No *Pose_gaze_AUs.csv found in features directory.")
-                
-            # 3. Clean up unneeded nested hierarchy
-            # Only remove the `features` folder if AUs extraction is completed or checked
+                print(f"[{participant_id}] AUs/Pose/Gaze already extracted in raw directory.")
+        else:
+            print(f"[{participant_id}] No OpenFace CSV found. Cannot extract AUs, gaze, pose.")
+            
+        # 3. Clean up unneeded nested hierarchy SAFELY
+        features_dir = os.path.join(p_dir, "features")
+        # Only remove features directory if the output actually exists
+        if os.path.exists(features_dir) and os.path.exists(au_out):
             try:
                 shutil.rmtree(features_dir)
                 print(f"[{participant_id}] Removed nested 'features' hierarchy to match standard 300_P format.")
             except Exception as e:
                 print(f"[{participant_id}] Could not remove 'features' directory: {e}")
-        else:
-            print(f"[{participant_id}] No 'features' directory found (already clean).")
             
-        # Also clean up unneeded tar.gz archives
-        for tar_file in glob.glob(os.path.join(p_dir, "*.tar.gz")):
-            try:
-                os.remove(tar_file)
-                print(f"[{participant_id}] Removed unused archive: {os.path.basename(tar_file)}")
-            except Exception as e:
-                pass
+        # Also clean up unneeded tar.gz archives (only if we successfully processed the folder!)
+        if os.path.exists(wav_path):
+            for tar_file in glob.glob(os.path.join(p_dir, "*.tar.gz")):
+                try:
+                    os.remove(tar_file)
+                    print(f"[{participant_id}] Removed unused archive: {os.path.basename(tar_file)}")
+                except Exception as e:
+                    pass
 
 if __name__ == "__main__":
     main()
