@@ -109,8 +109,10 @@ def build_and_save_datasets():
         if data['X'].size > 0:
             np.save(os.path.join(SAVE_DIR, f"X_{s}.npy"), data['X'])
             np.save(os.path.join(SAVE_DIR, f"X_{s}_scaled.npy"), data.get('X_scaled', data['X']))
-            if data['y'].size > 0 and data['y'][0] is not None:
-                np.save(os.path.join(SAVE_DIR, f"y_{s}.npy"), data['y'])
+            # Save labels only if they exist and are valid (not None/NaN)
+            valid_labels = [l for l in data['y'] if l is not None and str(l) != 'nan']
+            if len(valid_labels) > 0:
+                np.save(os.path.join(SAVE_DIR, f"y_{s}.npy"), np.array(valid_labels, dtype=np.float32))
             np.save(os.path.join(SAVE_DIR, f"ids_{s}.npy"), data['ids'])
     
     print(f"\nFinished. Formatted vectors and labels saved to {SAVE_DIR}")
