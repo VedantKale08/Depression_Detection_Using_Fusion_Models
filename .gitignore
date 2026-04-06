@@ -31,3 +31,9 @@ models/*.pth
 # IDEs
 .idea/
 .vscode/
+
+data
+
+working
+
+assets
