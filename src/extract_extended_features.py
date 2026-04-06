@@ -1,7 +1,19 @@
 import os
 import glob
 import pandas as pd
+import numpy as np
+import shutil
+import sys
+from pathlib import Path
+
+# Add project root to python path to resolve Audio and Text imports
+project_root = str(Path(__file__).parent.parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 from extract_raw_features import extract_covarep, extract_formants
+from Audio.audio_inference import get_audio_emotion_vector_v1
+from Text import get_text_emotion_vector
 
 def process_csv(csv_path, out_dir, participant_id):
     """
@@ -70,6 +82,7 @@ def process_csv(csv_path, out_dir, participant_id):
         df_pose.to_csv(os.path.join(out_dir, f"{participant_id}_CLNF_pose.txt"), index=False)
         print(f"[{participant_id}] -> Saved {participant_id}_CLNF_pose.txt")
 
+
 def main():
     raw_dir = "data/raw/DAIC_WOZ"
     if not os.path.exists(raw_dir):
@@ -81,28 +94,48 @@ def main():
     
     for p_dir in participant_folders:
         participant_id = os.path.basename(p_dir).split("_")[0]
-        print(f"\n--- Checking participant {participant_id} ({os.path.basename(p_dir)}) ---")
+        print(f"\\n--- Checking participant {participant_id} ({os.path.basename(p_dir)}) ---")
         
-        # 1. Process Audio
+        # 0. Ensure transcript matches 300_TRANSCRIPT.csv format
+        transcript_out = os.path.join(p_dir, f"{participant_id}_TRANSCRIPT.csv")
+        if not os.path.exists(transcript_out):
+            trans_candidates = [f"{participant_id}_Transcript.csv", f"{participant_id}_transcript.csv"]
+            for cand in trans_candidates:
+                cand_path = os.path.join(p_dir, cand)
+                if os.path.exists(cand_path):
+                    os.rename(cand_path, transcript_out)
+                    print(f"[{participant_id}] Renamed {cand} to {participant_id}_TRANSCRIPT.csv")
+                    break
+
+        # 1. Process Audio & Text (+ COVAREP + Emotion Vectors)
         wav_path = os.path.join(p_dir, f"{participant_id}_AUDIO.wav")
         if os.path.exists(wav_path):
             covarep_path = os.path.join(p_dir, f"{participant_id}_COVAREP.csv")
-            formant_path = os.path.join(p_dir, f"{participant_id}_FORMANT.csv")
+            audio_emo_out = os.path.join(p_dir, f"{participant_id}_audio_emotion.npy")
             
-            # # Formants
-            # if not os.path.exists(formant_path):
-            #     extract_formants(wav_path, p_dir, participant_id)
-            # else:
-            #     print(f"[{participant_id}] FORMANT already exists.")
-                
-            # COVAREP
+            # COVAREP extraction
             if not os.path.exists(covarep_path):
                 extract_covarep(wav_path, p_dir, participant_id)
             else:
                 print(f"[{participant_id}] COVAREP already exists.")
+                
+            # Audio emotion
+            if not os.path.exists(audio_emo_out):
+                print(f"[{participant_id}] Extracting audio emotion vector...")
+                vec = get_audio_emotion_vector_v1(wav_path)
+                np.save(audio_emo_out, vec)
+                print(f"[{participant_id}] -> Saved {participant_id}_audio_emotion.npy")
         else:
             print(f"[{participant_id}] Audio file not found: {wav_path}")
             
+        # Text emotion
+        text_emo_out = os.path.join(p_dir, f"{participant_id}_text_emotion.npy")
+        if os.path.exists(transcript_out) and not os.path.exists(text_emo_out):
+            print(f"[{participant_id}] Extracting text emotion vector...")
+            vec = get_text_emotion_vector(transcript_out)
+            np.save(text_emo_out, vec)
+            print(f"[{participant_id}] -> Saved {participant_id}_text_emotion.npy")
+
         # 2. Process OpenFace CSV inside the "features" folder (if it exists)
         features_dir = os.path.join(p_dir, "features")
         if os.path.exists(features_dir):
@@ -120,8 +153,24 @@ def main():
                     print(f"[{participant_id}] AUs/Pose/Gaze already extracted in raw directory.")
             else:
                 print(f"[{participant_id}] No *Pose_gaze_AUs.csv found in features directory.")
+                
+            # 3. Clean up unneeded nested hierarchy
+            # Only remove the `features` folder if AUs extraction is completed or checked
+            try:
+                shutil.rmtree(features_dir)
+                print(f"[{participant_id}] Removed nested 'features' hierarchy to match standard 300_P format.")
+            except Exception as e:
+                print(f"[{participant_id}] Could not remove 'features' directory: {e}")
         else:
-            print(f"[{participant_id}] No 'features' directory found.")
+            print(f"[{participant_id}] No 'features' directory found (already clean).")
+            
+        # Also clean up unneeded tar.gz archives
+        for tar_file in glob.glob(os.path.join(p_dir, "*.tar.gz")):
+            try:
+                os.remove(tar_file)
+                print(f"[{participant_id}] Removed unused archive: {os.path.basename(tar_file)}")
+            except Exception as e:
+                pass
 
 if __name__ == "__main__":
     main()
