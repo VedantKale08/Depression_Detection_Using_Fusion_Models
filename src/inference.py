@@ -78,18 +78,24 @@ def predict(video_path):
     print("="*60)
     process_video(video_path, participant_id)
     
-    # 3. Preprocess and Window Features (Merge into 224 features per frame)
+    # 3. Preprocess and Window Features (Merge into 210 features per frame)
     print("\n" + "="*60)
     print("STEP 2: Windowing features into 30-second sequences")
     print("="*60)
     
     # process_participant expects the parent directory of {id}_P
-    # It returns an array of shape (num_chunks, 300, 224)
-    chunks = process_participant(participant_id, data_dir, data_dir, chunk_size=300)
+    # It returns chunks (num_chunks, 300, 210) and emotion_vec (14,)
+    result = process_participant(participant_id, data_dir, data_dir, chunk_size=300)
     
-    if chunks is None or len(chunks) == 0:
+    if result is None:
         print("Error: Could not extract features and chunk them correctly.")
         print("Please check if the required files (.csv, .txt, .npy) were generated successfully in data/input/")
+        return
+        
+    chunks, emotion_vec = result
+        
+    if len(chunks) == 0:
+        print("Error: Extracted chunks are empty.")
         return
         
     print(f"Successfully generated {len(chunks)} sequence(s).")
@@ -113,6 +119,10 @@ def predict(video_path):
     
     x_tensor = torch.tensor(chunks, dtype=torch.float32).to(device)
     
+    # Prepare emotion tensor (replicate emotion_vec for each chunk in the batch)
+    emotion_expanded = np.tile(emotion_vec, (len(chunks), 1))
+    emo_tensor = torch.tensor(emotion_expanded, dtype=torch.float32).to(device)
+    
     # 5. Load Model and Predict
     print("\n" + "="*60)
     print("STEP 4: Running Hybrid Depression Model")
@@ -131,7 +141,7 @@ def predict(video_path):
     model.eval()
     
     with torch.no_grad():
-        logits = model(x_tensor)
+        logits = model(x_tensor, emo_tensor)
         probs = torch.sigmoid(logits).cpu().numpy()
         
     summary = aggregate_sequence_probs(probs)
