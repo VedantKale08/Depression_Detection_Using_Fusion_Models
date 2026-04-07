@@ -165,22 +165,32 @@ def main():
             print(f"[{participant_id}] -> Saved {participant_id}_text_emotion.npy")
 
         # 2. Process OpenFace CSV (Search dynamically in both root and 'features' folder)
+        # We need the per-frame CSV (OpenFace2.x_Pose_gaze_AUs.csv), NOT the
+        # BoVW-aggregated versions (BoVW_openFace*.csv) which lack per-frame columns.
         pose_csv = None
         search_dirs = [p_dir, os.path.join(p_dir, "features")]
         for sdir in search_dirs:
             if os.path.exists(sdir):
-                for fname in os.listdir(sdir):
+                for fname in sorted(os.listdir(sdir)):  # sorted for determinism
                     lname = fname.lower()
+                    # Skip Bag-of-Visual-Words encoded files – they don't have per-frame columns
+                    if "bovw" in lname:
+                        continue
                     if ("openface" in lname or "pose_gaze" in lname) and lname.endswith(".csv"):
                         pose_csv = os.path.join(sdir, fname)
+                        print(f"[{participant_id}] Found per-frame OpenFace CSV: {fname}")
                         break
             if pose_csv:
                 break
-        
-        au_out = os.path.join(p_dir, f"{participant_id}_CLNF_AUs.txt")
+
+        au_out   = os.path.join(p_dir, f"{participant_id}_CLNF_AUs.txt")
+        gaze_out = os.path.join(p_dir, f"{participant_id}_CLNF_gaze.txt")
+        pose_out = os.path.join(p_dir, f"{participant_id}_CLNF_pose.txt")
+        all_extracted = os.path.exists(au_out) and os.path.exists(gaze_out) and os.path.exists(pose_out)
+
         if pose_csv:
-            # If AU file isn't there, extract
-            if not os.path.exists(au_out):
+            # Extract only if any one of the three output files is missing
+            if not all_extracted:
                 try:
                     process_csv(pose_csv, p_dir, participant_id)
                 except Exception as e:
@@ -188,12 +198,12 @@ def main():
             else:
                 print(f"[{participant_id}] AUs/Pose/Gaze already extracted in raw directory.")
         else:
-            print(f"[{participant_id}] No OpenFace CSV found. Cannot extract AUs, gaze, pose.")
+            print(f"[{participant_id}] No per-frame OpenFace CSV found. Cannot extract AUs, gaze, pose.")
             
         # 3. Clean up unneeded nested hierarchy SAFELY
         features_dir = os.path.join(p_dir, "features")
-        # Only remove features directory if the output actually exists
-        if os.path.exists(features_dir) and os.path.exists(au_out):
+        # Only remove features directory once ALL three outputs exist
+        if os.path.exists(features_dir) and all_extracted:
             try:
                 shutil.rmtree(features_dir)
                 print(f"[{participant_id}] Removed nested 'features' hierarchy to match standard 300_P format.")

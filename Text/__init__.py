@@ -11,6 +11,9 @@ def get_text_emotion_vector(transcript_file):
     Generates text emotion vector for a participant's transcript.
     Filters out Bot/Interviewer text and extracts exact participant dialog.
     Averages predictions over all participant text segments to produce a single 7-class prob vector.
+    
+    DAIC-WOZ transcript format: comma-separated Start_Time,End_Time,Text,Confidence
+    All rows are participant speech (single-mic recording).
     """
     global _predictor
     
@@ -19,23 +22,38 @@ def get_text_emotion_vector(transcript_file):
         return np.zeros(len(emotion_labels))
 
     try:
-        # Transcript uses tab separation as per extract_raw_features.py
-        df = pd.read_csv(transcript_file, sep='\t')
+        # Auto-detect separator (DAIC-WOZ uses comma, some older files use tab)
+        with open(transcript_file, 'r') as f:
+            first_line = f.readline()
+        sep = '\t' if '\t' in first_line else ','
+        df = pd.read_csv(transcript_file, sep=sep)
         
         # Strip spaces from column names to safely retrieve values
         df.columns = df.columns.str.strip()
         
-        # Filter for only participant text
+        # Filter for only participant text if a speaker column exists.
+        # In DAIC-WOZ per-participant-mic CSVs there is NO speaker column –
+        # every row is already participant speech, so we use all rows.
         if 'speaker' in df.columns:
             is_participant = df['speaker'].astype(str).str.lower().str.strip() == 'participant'
             participant_df = df[is_participant]
         else:
             participant_df = df
             
-        if 'value' in participant_df.columns:
-            texts = participant_df['value'].dropna().astype(str).tolist()
-        else:
-            texts = []
+        # Column name for the text content varies by format
+        text_col = None
+        for candidate in ['Text', 'value', 'text', 'utterance']:
+            if candidate in participant_df.columns:
+                text_col = candidate
+                break
+
+        if text_col is None:
+            print(f"No text column found in {transcript_file}. Columns: {list(df.columns)}")
+            return np.zeros(len(emotion_labels))
+
+        texts = participant_df[text_col].dropna().astype(str).tolist()
+        # Filter out very short fragments (noise/filler)
+        texts = [t.strip() for t in texts if len(t.strip()) > 2]
             
         if not texts:
             print(f"No participant text found in {transcript_file}.")
