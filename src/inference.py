@@ -78,14 +78,19 @@ def predict(video_path):
     print("="*60)
     process_video(video_path, participant_id)
     
-    # 3. Preprocess and Window Features (Merge into 224 features per frame)
+    # 3. Preprocess and Window Features (Merge into 112 features per frame)
     print("\n" + "="*60)
     print("STEP 2: Windowing features into 30-second sequences")
     print("="*60)
     
     # process_participant expects the parent directory of {id}_P
-    # It returns an array of shape (num_chunks, 300, 224)
-    chunks = process_participant(participant_id, data_dir, data_dir, chunk_size=300)
+    # It returns (chunks, emotion_vec) where chunks shape is (num_chunks, 300, 112)
+    result = process_participant(participant_id, data_dir, data_dir, chunk_size=300)
+    if result is None:
+        chunks = None
+        emotion_vec = None
+    else:
+        chunks, emotion_vec = result
     
     if chunks is None or len(chunks) == 0:
         print("Error: Could not extract features and chunk them correctly.")
@@ -124,14 +129,20 @@ def predict(video_path):
         return
         
     # Initialize Multimodal Sequence Model
-    model = DepressionHybridModel(input_size=224, hidden_size=128, num_layers=2)
+    model = DepressionHybridModel(input_size=112, hidden_size=64, num_layers=1, dropout=0.5)
     checkpoint = torch.load(model_path, map_location=device)
     model.load_state_dict(checkpoint["model_state_dict"])    
     model.to(device)
     model.eval()
+
+    # Repeat the session emotion vector for every chunk so the model receives a batch of emotion inputs
+    if emotion_vec is None:
+        emotion_vec = np.zeros((14,), dtype=np.float32)
+    emotion_batch = np.repeat(emotion_vec[np.newaxis, :], len(chunks), axis=0)
+    emo_tensor = torch.tensor(emotion_batch, dtype=torch.float32).to(device)
     
     with torch.no_grad():
-        logits = model(x_tensor)
+        logits = model(x_tensor, emo_tensor)
         probs = torch.sigmoid(logits).cpu().numpy()
         
     summary = aggregate_sequence_probs(probs)

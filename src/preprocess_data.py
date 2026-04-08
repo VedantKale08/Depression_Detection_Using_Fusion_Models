@@ -1,4 +1,5 @@
 import os
+import shutil
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -102,7 +103,6 @@ def process_participant(participant_id, data_dir, output_dir, chunk_size=300):
         pose_vals,                    # Pose (6)
         gaze_vals                     # Gaze (12)
     ], axis=1)
-    
     features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
     
     # Chunking
@@ -119,7 +119,7 @@ def process_participant(participant_id, data_dir, output_dir, chunk_size=300):
         chunks.append(chunk)
     
     # Return chunks AND the per-session emotion vectors (7+7=14 dims)
-    emotion_vec = np.concatenate([audio_emotion, text_emotion], axis=0).astype(np.float32)  # (14,)
+    emotion_vec = np.concatenate([audio_emotion, text_emotion], axis=0).astype(np.float32)
     return np.array(chunks), emotion_vec
 
 def load_labels(csv_path):
@@ -131,6 +131,15 @@ def main():
     base_dir = "data/raw/DAIC_WOZ"
     output_dir = "data/processed"
     
+    # Clean up any old processed split files before regenerating new 112-D data
+    if os.path.exists(output_dir):
+        for subdir in ["train", "dev", "test"]:
+            path = os.path.join(output_dir, subdir)
+            if os.path.exists(path):
+                shutil.rmtree(path)
+        norm_path = os.path.join(output_dir, "normalization_params.npz")
+        if os.path.exists(norm_path):
+            os.remove(norm_path)
     os.makedirs(output_dir, exist_ok=True)
     
     # Get labels
@@ -180,7 +189,7 @@ def main():
             update_global_stats(stats, chunks)
         
         # Save chunks, emotion vector, and label as npz
-        # chunks: (num_chunks, chunk_size, 210) — per-frame temporal features
+        # chunks: (num_chunks, chunk_size, 112) — per-frame temporal features
         # emotion: (14,)                        — session-level auxiliary features
         # label: scalar
         np.savez(os.path.join(split_out_dir, f"{part_id}.npz"),
