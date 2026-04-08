@@ -72,11 +72,11 @@ def predict(video_path):
     out_dir = os.path.join(data_dir, f"{participant_id}_P")
     os.makedirs(out_dir, exist_ok=True)
     
-    # 2. Extract Raw Features (OpenFace, Whisper, Parselmouth, Emotion Extractors)
-    print("\n" + "="*60)
-    print("STEP 1: Extracting raw features from video")
-    print("="*60)
-    process_video(video_path, participant_id)
+    # # 2. Extract Raw Features (OpenFace, Whisper, Parselmouth, Emotion Extractors)
+    # print("\n" + "="*60)
+    # print("STEP 1: Extracting raw features from video")
+    # print("="*60)
+    # process_video(video_path, participant_id)
     
     # 3. Preprocess and Window Features (Merge into 224 features per frame)
     print("\n" + "="*60)
@@ -85,12 +85,18 @@ def predict(video_path):
     
     # process_participant expects the parent directory of {id}_P
     # It returns an array of shape (num_chunks, 300, 224)
-    chunks = process_participant(participant_id, data_dir, data_dir, chunk_size=300)
+    result = process_participant(participant_id, data_dir, data_dir, chunk_size=300)
+    if result is None:
+        chunks = None
+    else:
+        chunks, emotion_vec = result
     
     if chunks is None or len(chunks) == 0:
         print("Error: Could not extract features and chunk them correctly.")
         print("Please check if the required files (.csv, .txt, .npy) were generated successfully in data/input/")
         return
+    
+    print(f"Emotion vector shape: {emotion_vec.shape}")
         
     print(f"Successfully generated {len(chunks)} sequence(s).")
     
@@ -113,25 +119,35 @@ def predict(video_path):
     
     x_tensor = torch.tensor(chunks, dtype=torch.float32).to(device)
     
+    # Broadcast emotion_vec across all chunks: (num_chunks, 14)
+    num_chunks = x_tensor.shape[0]
+    emotion_tensor = torch.tensor(
+        np.tile(emotion_vec, (num_chunks, 1)), dtype=torch.float32
+    ).to(device)
+    
     # 5. Load Model and Predict
     print("\n" + "="*60)
     print("STEP 4: Running Hybrid Depression Model")
     print("="*60)
     
-    model_path = "weights/best_hybrid_model.pth"
+    model_path = "weights/MAIN_best_hybrid_model.pth"
     if not os.path.exists(model_path):
         print(f"Error: Trained model weights not found at {model_path}.")
         return
         
     # Initialize Multimodal Sequence Model
-    model = DepressionHybridModel(input_size=224, hidden_size=128, num_layers=2)
-    checkpoint = torch.load(model_path, map_location=device)
+    # Architecture must match the saved checkpoint:
+    #   input_size=112 (checkpoint lstm.weight_ih_l0 shape [256,112] -> 4*64=256 hidden, input=112)
+    #   hidden_size=64, num_layers=1 (only l0 keys present in checkpoint)
+    #   fc1 input = 64*2 + 14 = 142  (matches checkpoint fc1.weight [64,142])
+    model = DepressionHybridModel(input_size=210, hidden_size=64, num_layers=1)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])    
     model.to(device)
     model.eval()
     
     with torch.no_grad():
-        logits = model(x_tensor)
+        logits = model(x_tensor, emotion_tensor)
         probs = torch.sigmoid(logits).cpu().numpy()
         
     summary = aggregate_sequence_probs(probs)
