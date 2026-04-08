@@ -16,15 +16,14 @@ def extract_features(loader):
             x_batch, y_batch = batch
             emo_batch = torch.zeros((x_batch.shape[0], 14))
 
-        x_batch = x_batch.numpy() # (batch, time, 210)
+        x_batch = x_batch.numpy() # (batch, time, 112)
         emo_batch = emo_batch.numpy() # (batch, 14)
         y_batch = y_batch.numpy() # (batch,)
-        
         # calculate statistics over time axis (axis=1)
-        mean_feat = np.mean(x_batch, axis=1) # (batch, 210)
-        std_feat = np.std(x_batch, axis=1) # (batch, 210)
-        max_feat = np.max(x_batch, axis=1) # (batch, 210)
-        min_feat = np.min(x_batch, axis=1) # (batch, 210)
+        mean_feat = np.mean(x_batch, axis=1) # (batch, 112)
+        std_feat = np.std(x_batch, axis=1) # (batch, 112)
+        max_feat = np.max(x_batch, axis=1) # (batch, 112)
+        min_feat = np.min(x_batch, axis=1) # (batch, 112)
         
         flat_feats = np.concatenate([mean_feat, std_feat, max_feat, min_feat, emo_batch], axis=1)
         

@@ -18,26 +18,33 @@ class DAIC_Dataset(Dataset):
         self.normalize = normalize
         
         # Load normalization params if needed
+        self.expected_dim = None
         if self.normalize:
             params_path = os.path.join(data_dir, "normalization_params.npz")
             if os.path.exists(params_path):
                 params = np.load(params_path)
                 self.mean = torch.tensor(params['mean'], dtype=torch.float32)
                 self.std = torch.tensor(params['std'], dtype=torch.float32)
+                self.expected_dim = self.mean.shape[0]
             else:
                 print(f"Warning: Normalization params not found at {params_path}.")
                 self.normalize = False
                 
         # We index all chunks. Each .npz file has shape (num_chunks, chunk_size, num_features)
         # To avoid loading everything into RAM, we first build an index:
-        # File paths -> number of chunks inside
-        self.files = glob.glob(os.path.join(self.split_dir, "*.npz"))
+        self.files = sorted(glob.glob(os.path.join(self.split_dir, "*.npz")))
         self.samples = []
+        skipped_files = 0
         
         print(f"Building index for {split} split...")
         for file_path in self.files:
             data = np.load(file_path)
             num_chunks = data['chunks'].shape[0]
+            chunk_dim = data['chunks'].shape[-1]
+            if self.expected_dim is not None and chunk_dim != self.expected_dim:
+                print(f"  Skipping '{os.path.basename(file_path)}': feature dim {chunk_dim} does not match expected {self.expected_dim}.")
+                skipped_files += 1
+                continue
             label = float(data['label'])
             # Load session-level emotion vector (14,): audio(7) + text(7)
             emotion_vec = data['emotion'] if 'emotion' in data else np.zeros(14, dtype=np.float32)
@@ -50,7 +57,9 @@ class DAIC_Dataset(Dataset):
                     'emotion': emotion_vec   # shared across all chunks of this participant
                 })
                 
-        print(f"Found {len(self.samples)} chunks in {len(self.files)} participants.")
+        print(f"Found {len(self.samples)} chunks in {len(self.files) - skipped_files} participants.")
+        if skipped_files > 0:
+            print(f"Skipped {skipped_files} file(s) with mismatched feature dimensions.")
 
         
         # For efficiency, we will cache the last loaded file
@@ -74,7 +83,7 @@ class DAIC_Dataset(Dataset):
             self.current_cache_file = file_path
             
         chunk_data = self.current_cache_chunks[chunk_idx]
-        x = torch.tensor(chunk_data, dtype=torch.float32)          # (300, 210)
+        x = torch.tensor(chunk_data, dtype=torch.float32)          # (300, 112)
         emotion = torch.tensor(emotion_vec, dtype=torch.float32)   # (14,)
         y = torch.tensor(label, dtype=torch.float32)
         

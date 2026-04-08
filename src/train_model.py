@@ -35,12 +35,15 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
     print(f"Data Loaded! Train subsets: {len(train_loader.dataset)} | Dev subsets: {len(dev_loader.dataset)}")
     
     # 2. Setup Model
-    # input_size=210: COVAREP(74) + CLNF(136) — emotions are auxiliary inputs at the FC head
+    # We are using the 112-dimensional temporal feature pipeline.
+    input_size = 112
+    print(f"Using fixed input dimension: {input_size}")
+    
     if model_type == "transformer":
-        model = DepressionTransformerModel(input_size=210, d_model=128, nhead=4, num_layers=2, dropout=0.5)
+        model = DepressionTransformerModel(input_size=input_size, d_model=128, nhead=4, num_layers=2, dropout=0.5)
         checkpoint_path = "weights/best_transformer_model.pth"
     else:
-        model = DepressionHybridModel(input_size=210, hidden_size=64, num_layers=1, dropout=0.5)
+        model = DepressionHybridModel(input_size=input_size, hidden_size=64, num_layers=1, dropout=0.5)
         checkpoint_path = "weights/best_hybrid_model.pth"
     model.to(device)
     
@@ -56,18 +59,30 @@ def train_model(data_dir="data/processed", batch_size=32, epochs=20, learning_ra
     
     # 4. Resume from checkpoint if available
     if resume and os.path.exists(checkpoint_path):
-        checkpoint = torch.load(checkpoint_path, map_location=device)
-        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-            model.load_state_dict(checkpoint['model_state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            best_f1 = checkpoint.get('best_f1', 0.0)
-            print(f"Resumed from checkpoint '{checkpoint_path}' (best F1 so far: {best_f1:.4f})")
-        else:
-            # Legacy: checkpoint is just model state_dict
-            model.load_state_dict(checkpoint)
-            print(f"Resumed model weights from '{checkpoint_path}' (no optimizer state found)")
-    else:
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        except TypeError:
+            # Older torch versions may not support weights_only
+            checkpoint = torch.load(checkpoint_path, map_location=device)
+        try:
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
+                if 'optimizer_state_dict' in checkpoint:
+                    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                best_f1 = checkpoint.get('best_f1', 0.0)
+                print(f"Resumed from checkpoint '{checkpoint_path}' (best F1 so far: {best_f1:.4f})")
+            else:
+                # Legacy: checkpoint is just model state_dict
+                model.load_state_dict(checkpoint)
+                print(f"Resumed model weights from '{checkpoint_path}' (no optimizer state found)")
+        except RuntimeError:
+            print(f"Warning: checkpoint at '{checkpoint_path}' is incompatible with current model size {input_size}.")
+            print("Training from scratch instead. Use --no-resume to ignore the checkpoint permanently.")
+            best_f1 = 0.0
+    elif resume:
         print("No checkpoint found — training from scratch.")
+    else:
+        print("Resume disabled — training from scratch.")
 
     # 4. Training Loop
     for epoch in range(1, epochs + 1):
