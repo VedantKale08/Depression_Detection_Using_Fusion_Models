@@ -172,6 +172,7 @@ def predict(video_path):
         pct = summary['percentages'][label] * 100
         print(f"  {label}: {count} segment(s) ({pct:.1f}%)")
     
+    # ... (print blocks) ...
     print("\n------------------------------------------------------------")
     if level == "high":
         print("DIAGNOSIS: HIGH depression risk — must immediately consult a doctor.")
@@ -180,6 +181,9 @@ def predict(video_path):
     else:
         print("DIAGNOSIS: LOW depression risk — can be ignored.")
     print("------------------------------------------------------------\n")
+    
+    return summary
+
     
 
 if __name__ == "__main__":
