@@ -54,9 +54,9 @@ function App() {
     formData.append('video', file);
 
     try {
-      // In production, might be /api/analyze if strictly using proxy, 
-      // but let's use full URL if running Flask on 5000 and React separately
-      const response = await fetch('http://127.0.0.1:5000/api/analyze', {
+      // Use relative path to utilize the Vite proxy which handles mapping to Flask
+      // (whether running natively or via host.docker.internal in Docker)
+      const response = await fetch('/api/analyze', {
         method: 'POST',
         body: formData,
       });

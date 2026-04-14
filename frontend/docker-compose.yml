@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  react-frontend:
+    image: node:20-alpine
+    container_name: react_ui
+    working_dir: /app
+    volumes:
+      - .:/app
+      # Map node_modules anonymously to prevent host OS conflicts
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+      - "5173:5173"
+    environment:
+      - CHOKIDAR_USEPOLLING=true # Helps with hot-reloading on Windows paths
+    command: sh -c "npm install && npm run dev"

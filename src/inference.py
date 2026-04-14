@@ -72,11 +72,11 @@ def predict(video_path):
     out_dir = os.path.join(data_dir, f"{participant_id}_P")
     os.makedirs(out_dir, exist_ok=True)
     
-    # # 2. Extract Raw Features (OpenFace, Whisper, Parselmouth, Emotion Extractors)
-    # print("\n" + "="*60)
-    # print("STEP 1: Extracting raw features from video")
-    # print("="*60)
-    # process_video(video_path, participant_id)
+    # 2. Extract Raw Features (OpenFace, Whisper, Parselmouth, Emotion Extractors)
+    print("\n" + "="*60)
+    print("STEP 1: Extracting raw features from video")
+    print("="*60)
+    process_video(video_path, participant_id)
     
     # 3. Preprocess and Window Features (Merge into 224 features per frame)
     print("\n" + "="*60)
