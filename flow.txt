@@ -9,3 +9,13 @@ python src/preprocess_data.py
 
 To train the model
 python src/train_model.py
+
+
+------------------------------------------------------
+To run the full stack web app:
+1. Start server using 
+python app.py
+
+2. Start the frontend using:
+cd frontend
+docker-compose up
