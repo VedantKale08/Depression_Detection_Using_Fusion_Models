@@ -1,0 +1,10 @@
+frontend/
+working/
+notebooks/
+scripts/
+tests/
+__pycache__/
+*.pyc
+.env
+.git
+.github
